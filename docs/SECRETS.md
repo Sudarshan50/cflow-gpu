@@ -92,7 +92,7 @@ is reclaimed (`ARCHITECTURE.md` §9). Decide deliberately what to carry.
 | Credential | Fresh or carried | Why |
 |---|---|---|
 | `api-key.txt` + `vllm-k3.env` | **fresh** | Only nginx holds it. Regenerating it is invisible to customers, and `deploy.sh` mints one automatically if the file is absent (`deploy.sh:404-409`). |
-| `customers.tsv` | **carried** | These are keys your customers have already configured. Losing the file means re-issuing every key and breaking every live integration at once. Copy it to the new box **before** running `./deploy.sh keys`, mode 600. |
+| `customers.tsv` | **carried** | These are keys your customers have already configured. Losing the file means re-issuing every key and breaking every live integration at once. Restore it **before** `./deploy.sh keys`, mode 600 — see §3.1. |
 | `dash-password.txt` + htpasswd | **fresh** | Internal credential, nobody else depends on it. |
 | TLS key and certificate | **fresh** | certbot issues a new one; the old private key should not travel. Note the DNS gate and rate limit in §4.4. |
 | `00-k3-keys.conf`, `k3-limits.inc` | **regenerated** | `./gen-keys.sh` rebuilds both from `customers.tsv` + `api-key.txt`. Never copy them between boxes. |
@@ -112,6 +112,62 @@ Order matters on the new box: secrets before keys (`gen-keys.sh:20` reads
 references `$k3_customer` and includes `k3-limits.inc`, so `nginx -t` fails
 without them). `deploy.sh` encodes the full ordering with the reasons
 (`deploy.sh:191-228`).
+
+### 3.1 The encrypted secrets bundle
+
+"Carry `customers.tsv`" is only a plan if a copy exists somewhere the droplet
+does not. It did not: every credential lived solely on `/scratch`. A reclaim
+would have destroyed all of them, and `deploy.sh` would then have seeded an
+empty `customers.tsv` and minted a new upstream key — every customer 401ing,
+with no way to tell them what their key is now, because a generated key is not
+the one they hold.
+
+`secrets-backup.sh` closes that gap:
+
+```bash
+./secrets-backup.sh backup [outfile]    # encrypt api-key.txt, dash-password.txt,
+                                        # customers.tsv, vllm-k3.env
+./secrets-backup.sh verify <file>       # list contents, no writes
+./secrets-backup.sh restore <file>      # decrypt into place, mode 600
+```
+
+AES-256-CBC with PBKDF2 at 600,000 iterations: the bundle is meant to sit in
+durable storage, possibly a git remote, so it has to resist offline cracking
+rather than merely be "encrypted". The passphrase is prompted (or
+`$SECRETS_PASSPHRASE`) and is the only thing protecting every customer
+credential — store it in a password manager, because losing it is equivalent to
+losing the backup.
+
+Three safeguards, each for a mistake that is easy to make at 3am:
+
+- It refuses to write inside the working tree unless `ALLOW_IN_REPO=1`. An
+  encrypted blob is still a credential, and `git add -A` does not ask.
+- `restore` decrypts into a tmpdir first, so a wrong passphrase cannot leave
+  the box with half its credentials replaced.
+- `restore` refuses a bundle whose `VLLM_API_KEY` disagrees with `api-key.txt`.
+  Restoring that pair inconsistently is the silent-401 described in §4.2.
+
+**This bundle is the one credential file deliberately committed.** The private
+GitHub repo is the only durable store this deployment has, and an encrypted
+bundle there is worth more than a plaintext one nowhere. `secret-scan.sh`
+therefore checks every tracked `*.enc` for the `Salted__` header that
+`openssl enc -salt` writes, and fails the push if a bundle is not actually
+ciphertext. That check earns its place: a bundle written as a plain `tar -cz`
+passes the literal-value scan, because gzip compresses the keys beyond what
+`git grep` can match. Put it at the repo root — `secrets/` is gitignored
+(`.gitignore:29`), so a bundle placed there would silently never commit.
+
+Recovery on a rebuilt box:
+
+```bash
+git clone https://github.com/Sudarshan50/cflow-gpu.git /scratch/deploy
+cd /scratch/deploy
+SECRETS_BUNDLE=./k3-secrets.enc sudo -E ./deploy.sh
+```
+
+`deploy.sh`'s `secrets` stage restores from `SECRETS_BUNDLE` when `api-key.txt`
+is absent, and warns loudly before minting fresh credentials on what looks like
+a rebuild rather than doing it silently.
 
 ---
 

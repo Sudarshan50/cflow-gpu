@@ -135,6 +135,28 @@ fi
 # implying full coverage.
 [ "$n" -gt 0 ] || note "no live secret files on this box to compare against"
 
+# The secrets bundle is the one credential file we deliberately DO commit, so
+# it needs its own check: prove it is actually ciphertext. A bundle written
+# without encryption, or a tarball someone dropped in by hand, would sail past
+# every pattern above (tar headers contain no key material at the offsets the
+# patterns look at) while publishing every customer key in the clear.
+echo
+echo "== committed secrets bundle =="
+bundles=$(git ls-files -- '*.enc' 2>/dev/null || true)
+if [ -z "$bundles" ]; then
+  note "no *.enc bundle tracked (create one: ./secrets-backup.sh backup)"
+else
+  while read -r b; do
+    [ -n "$b" ] || continue
+    # `openssl enc -salt` writes the 8-byte magic "Salted__" as a header.
+    if git show ":$b" 2>/dev/null | head -c 8 | grep -q 'Salted__'; then
+      ok "$b is openssl ciphertext (Salted__ header)"
+    else
+      bad "$b is TRACKED but does not look encrypted - inspect it before pushing"
+    fi
+  done <<< "$bundles"
+fi
+
 if [ "$STAGED_ONLY" = 0 ]; then
   echo
   echo "== history scan =="
