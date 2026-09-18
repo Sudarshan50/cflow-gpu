@@ -113,10 +113,8 @@ any. If a stage fails, fix the cause and re-run that stage alone. **Path C** in
 Not in git, created on the box (see [Secrets](#secrets)): `api-key.txt`,
 `customers.tsv`, `dash-password.txt`, `vllm-k3.env`.
 
-> `docs/RUNBOOK.md` and `docs/SECRETS.md` are authored in the same change as
-> this README and were not yet present when it was written.
-> `TODO(operator):` confirm both landed before treating the links to them as
-> live.
+Day-2 operations are in [`docs/RUNBOOK.md`](docs/RUNBOOK.md); credential
+handling and rotation are in [`docs/SECRETS.md`](docs/SECRETS.md).
 
 ---
 
@@ -234,9 +232,11 @@ Three caveats, all verified on the live box:
 The ignore rules are in `.gitignore`. Handling, rotation and blast radius:
 [`docs/SECRETS.md`](docs/SECRETS.md).
 
-> `.gitignore:6` instructs "Verify with `make secret-scan` before every push",
-> but no `secret-scan` target exists in `Makefile`. `TODO(operator):` add the
-> target or amend the comment.
+Run `make secret-scan` before every push, as `.gitignore:6` instructs. It
+checks that no credential is tracked, staged, or anywhere in history, that the
+ignore rules cover every live secret file, and that `k3-secrets.enc` is real
+ciphertext. `.githooks/pre-commit` runs the same scan on every commit once you
+enable it with `git config core.hooksPath .githooks`.
 
 ---
 
