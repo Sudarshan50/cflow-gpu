@@ -20,18 +20,25 @@ Four steps. The full version, with ordering constraints and failure modes, is
 
 1. **Create the droplet by hand in the DigitalOcean Control Panel.** This step
    is not automatable — see [What is deliberately not automated](#what-is-deliberately-not-automated).
-2. **Clone this repo to `/scratch/deploy`** (every script hardcodes that path,
-   e.g. `gen-keys.sh:19`, `k3.service:27`):
+2. **Clone this repo to `/scratch/deploy`.** `deploy.sh` finds its own
+   location, but `gen-keys.sh:19` and `k3.service:27` hardcode
+   `/scratch/deploy`, so use that path. The repo is private, so the clone needs
+   the PAT — a fresh box has no credential helper and git otherwise fails with
+   `could not read Username for 'https://github.com'`:
 
    ```bash
-   mkdir -p /scratch/deploy && git clone <this-repo> /scratch/deploy
+   mkdir -p /scratch
+   git clone https://Sudarshan50:<PAT>@github.com/Sudarshan50/cflow-gpu.git /scratch/deploy
    ```
 
-3. **Restore `customers.tsv`** if you are rebuilding and want existing customer
-   keys to keep working. Without it every customer must be re-issued. The
-   remaining secrets (`api-key.txt`, `dash-password.txt`, `vllm-k3.env`, the
-   dashboard htpasswd) are minted by `deploy.sh`'s `secrets` stage — see
-   [Secrets](#secrets).
+3. **Restore the secrets bundle** so existing customer keys keep working.
+   Skipping this mints fresh credentials and every live integration starts
+   returning 401 — a generated key is not the one your customer holds:
+
+   ```bash
+   cd /scratch/deploy
+   ./secrets-backup.sh verify k3-secrets.enc     # confirm the passphrase first
+   ```
 
 4. **Run the deployer.** Its final `verify` stage runs the security probes and
    the correctness gate for you:
@@ -39,6 +46,12 @@ Four steps. The full version, with ordering constraints and failure modes, is
    ```bash
    sudo ./deploy.sh              # all stages; ./deploy.sh --help for the list
    ```
+
+   The `secrets` stage picks up `k3-secrets.enc` from the repo automatically
+   and prompts for the passphrase. Point it elsewhere with
+   `SECRETS_BUNDLE=<file> sudo -E ./deploy.sh` — the `-E` is required there,
+   because plain `sudo` drops the variable and the stage would mint fresh keys
+   instead of restoring.
 
    It must end in `verification passed`, which includes `GATE PASS`.
 

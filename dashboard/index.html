@@ -8,11 +8,14 @@
   :root {
     --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3;
     --muted:#8b949e; --good:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#58a6ff;
+    --total:#a371f7;
+    --maxw:1500px;
   }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
          font:14px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif; }
-  header { padding:14px 20px; border-bottom:1px solid var(--line);
+  header { border-bottom:1px solid var(--line); }
+  .hwrap { max-width:var(--maxw); margin-inline:auto; padding:14px 20px;
            display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
   h1 { font-size:16px; margin:0; font-weight:600; }
   .pill { padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; }
@@ -20,7 +23,8 @@
   .pill.down{background:rgba(248,81,73,.15); color:var(--bad); border:1px solid var(--bad);}
   .pill.wait{background:rgba(210,153,34,.15); color:var(--warn); border:1px solid var(--warn);}
   .muted { color:var(--muted); font-size:12px; }
-  main { padding:20px; display:grid; gap:16px; max-width:1500px; }
+  main { padding:20px; display:grid; gap:16px; max-width:var(--maxw);
+         margin-inline:auto; width:100%; }
   .panel { background:var(--panel); border:1px solid var(--line);
            border-radius:8px; padding:16px; }
   .panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em;
@@ -28,6 +32,9 @@
   .panel h2 .note { text-transform:none; letter-spacing:0; font-weight:400; }
   .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr));
           gap:12px; }
+  #kpis { grid-template-columns:repeat(7,1fr); }
+  #kpis .hero { grid-column:span 2; }
+  #kpis .hero .val { font-size:28px; color:var(--total); }
   .kpi { background:#0d1117; border:1px solid var(--line);
          border-radius:6px; padding:10px 12px; }
   .kpi .label { font-size:11px; color:var(--muted); text-transform:uppercase;
@@ -74,6 +81,11 @@
   .tag { font-size:11px; padding:1px 6px; border-radius:4px; background:#21262d;
          color:var(--muted); }
 
+  /* #kpis blocks must stay in descending width order: equal specificity. */
+  @media (max-width:1180px) {
+    #kpis { grid-template-columns:repeat(4,1fr); }
+  }
+
   /* Tablet and phone. minmax(420px,...) above cannot fit a narrower viewport,
      so the two-up panels collapse to one column and the secondary table
      columns (.opt) drop out rather than forcing a sideways scroll for the
@@ -82,11 +94,12 @@
     main { padding:12px; gap:12px; }
     .panel { padding:12px; }
     .grid2 { grid-template-columns:1fr; }
-    header { padding:12px 14px; gap:8px 12px; }
+    .hwrap { padding:12px 14px; gap:8px 12px; }
     h1 { font-size:15px; }
     #endpointMeta { flex-basis:100%; order:3; }
     #clock { margin-left:0 !important; }
     .kpis { grid-template-columns:repeat(auto-fit,minmax(116px,1fr)); gap:8px; }
+    #kpis { grid-template-columns:repeat(3,1fr); }
     .kpi { padding:8px 10px; }
     .kpi .val { font-size:18px; }
     th,td { padding:6px 8px; }
@@ -95,16 +108,19 @@
   }
   @media (max-width:430px) {
     .kpis { grid-template-columns:repeat(2,1fr); }
+    #kpis { grid-template-columns:repeat(2,1fr); }
     canvas { height:140px; }
   }
 </style>
 </head>
 <body>
 <header>
-  <h1>Kimi-K3 &middot; endpoint monitor</h1>
-  <span id="state" class="pill wait">connecting</span>
-  <span class="muted" id="endpointMeta"></span>
-  <span class="muted" id="clock" style="margin-left:auto"></span>
+  <div class="hwrap">
+    <h1>Kimi-K3 &middot; endpoint monitor</h1>
+    <span id="state" class="pill wait">connecting</span>
+    <span class="muted" id="endpointMeta"></span>
+    <span class="muted" id="clock" style="margin-left:auto"></span>
+  </div>
 </header>
 
 <main>
@@ -114,13 +130,13 @@
   </div>
 
   <div class="panel">
-    <h2>Service <span class="note">&mdash; engine gauges now, traffic over the last 15 min</span></h2>
+    <h2>Service <span class="note">&mdash; token rates over 60s, engine gauges now, traffic over the last 15 min</span></h2>
     <div class="kpis" id="kpis"></div>
   </div>
 
   <div class="grid2">
     <div class="panel">
-      <h2>Token throughput <span class="note">&mdash; tokens/min, input vs output</span></h2>
+      <h2>Token throughput <span class="note">&mdash; TPM: total, input and output</span></h2>
       <canvas id="chartTokens"></canvas>
     </div>
     <div class="panel">
@@ -150,14 +166,16 @@
       <h2>Serving latency <span class="note">&mdash; 60s window, engine-side</span></h2>
       <div class="tablewrap">
         <table>
-          <thead><tr><th>metric</th><th>p50</th><th>p90</th><th>p99</th></tr></thead>
+          <thead><tr><th>metric</th><th>avg</th><th>p50</th><th>p90</th><th>p99</th></tr></thead>
           <tbody id="latBody"></tbody>
         </table>
       </div>
       <div class="muted" style="margin-top:8px">
-        Interpolated from Prometheus histogram buckets, so these are
-        bucket-bounded approximations. Queue time above zero means requests
-        are waiting for a decode slot rather than being served immediately.
+        <strong>avg</strong> is exact, from the histogram's own sum and count
+        over the window. The percentiles are interpolated from Prometheus
+        bucket edges, so they are approximations and a long tail can read
+        above the average. Queue time above zero means requests are waiting
+        for a decode slot rather than being served immediately.
       </div>
     </div>
     <div class="panel">
@@ -197,7 +215,7 @@
       <h2>Request shape <span class="note">&mdash; 60s window, tokens per request</span></h2>
       <div class="tablewrap">
         <table>
-          <thead><tr><th>metric</th><th>p50</th><th>p90</th><th>p99</th></tr></thead>
+          <thead><tr><th>metric</th><th>avg</th><th>p50</th><th>p90</th><th>p99</th></tr></thead>
           <tbody id="shapeBody"></tbody>
         </table>
       </div>
@@ -212,7 +230,6 @@ const fmt = (v, d = 0) =>
   (v === null || v === undefined || Number.isNaN(v))
     ? DASH
     : Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
-const ms = v => (v === null || v === undefined) ? DASH : fmt(v * 1000, 1) + ' ms';
 const secs = v => {
   if (v === null || v === undefined) return DASH;
   return v >= 1 ? fmt(v, 2) + ' s' : fmt(v * 1000, 0) + ' ms';
@@ -276,31 +293,51 @@ function renderAlerts(d) {
     a.map(x => `<div class="alert ${x.level}">${x.text}</div>`).join('');
 }
 
+function peakTpm(d) {
+  const pts = (d.series || []).filter(p => p.total_tpm !== null && p.total_tpm !== undefined);
+  if (!pts.length) return { v: null, mins: null };
+  return {
+    v: pts.reduce((m, p) => Math.max(m, p.total_tpm), pts[0].total_tpm),
+    mins: (pts[pts.length - 1].ts - pts[0].ts) / 60,
+  };
+}
+
 function renderKpis(d) {
   const w = d.window || {};
   const L = d.latest || {};
   const ac = d.access || {};
   const cap = d.capacity || {};
   const ttft = ((d.latency || {}).ttft || {}).p50;
+  const lat = (d.latency || {}).e2el || {};
+  const avgE2E = lat.avg;
   const errRate = ac.error_rate;
   const kv = cap.kv_usage;
+  const nil = v => v === null || v === undefined;
+  const pk = peakTpm(d);
 
   document.getElementById('kpis').innerHTML = [
+    kpi('Total TPM', fmt(w.total_tpm, 0),
+        'input + output \u00b7 ' + toks(w.prompt_tpm) + ' in, '
+        + toks(w.gen_tpm) + ' out', 'hero'),
+    kpi('Input TPM', toks(w.prompt_tpm), 'prefill'),
+    kpi('Output TPM', toks(w.gen_tpm), 'decode'),
+    kpi('Peak TPM', fmt(pk.v, 0),
+        pk.mins ? 'burst peak, last ' + fmt(pk.mins, 0) + 'm' : 'no samples yet'),
     kpi('Requests / min', fmt(ac.req_pm, 1),
         fmt(ac.requests) + ' in 15 min'),
     kpi('In flight', fmt(L.running), 'decoding now'),
     kpi('Queued', fmt(L.waiting), 'waiting for a slot',
         L.waiting > 0 ? 'warn' : ''),
-    kpi('Error rate', errRate === null || errRate === undefined ? DASH : pct(errRate),
-        '4xx + 5xx at the edge',
-        errRate > 0.25 ? 'bad' : (errRate > 0.02 ? 'warn' : 'good')),
+    kpi('Avg latency', secs(avgE2E),
+        lat.n ? 'end to end, ' + fmt(lat.n, 0) + ' req' : 'end to end, 60s'),
     kpi('TTFT p50', secs(ttft), 'time to first token'),
-    kpi('Output tokens / min', toks(w.gen_tpm), 'decode'),
-    kpi('Input tokens / min', toks(w.prompt_tpm), 'prefill'),
-    kpi('KV cache', kv === null || kv === undefined ? DASH : pct(kv, 1),
+    kpi('Error rate', nil(errRate) ? DASH : pct(errRate),
+        '4xx + 5xx at the edge',
+        nil(errRate) ? '' : (errRate > 0.25 ? 'bad' : (errRate > 0.02 ? 'warn' : 'good'))),
+    kpi('KV cache', nil(kv) ? DASH : pct(kv, 1),
         cap.capacity_tokens ? toks(cap.used_tokens) + ' / ' + toks(cap.capacity_tokens) : 'utilisation',
-        kv >= 0.9 ? 'bad' : (kv >= 0.7 ? 'warn' : 'good')),
-    kpi('Prefix cache', pct(cap.window_hit_rate !== null && cap.window_hit_rate !== undefined
+        nil(kv) ? '' : (kv >= 0.9 ? 'bad' : (kv >= 0.7 ? 'warn' : 'good'))),
+    kpi('Prefix cache', pct(!nil(cap.window_hit_rate)
         ? cap.window_hit_rate : cap.lifetime_hit_rate),
         'prompt tokens reused'),
     kpi('Completed', fmt(L.success_total), 'requests since start')
@@ -401,13 +438,15 @@ function render(d) {
                 ['Queue time', 'queue']];
   document.getElementById('latBody').innerHTML = rows.map(([name, key]) => {
     const v = (d.latency && d.latency[key]) || {};
-    return `<tr><td>${name}</td><td>${ms(v.p50)}</td><td>${ms(v.p90)}</td><td>${ms(v.p99)}</td></tr>`;
+    return `<tr><td>${name}</td><td>${secs(v.avg)}</td><td>${secs(v.p50)}</td>`
+         + `<td>${secs(v.p90)}</td><td>${secs(v.p99)}</td></tr>`;
   }).join('');
 
   const shape = [['Prompt tokens', 'prompt_len'], ['Generated tokens', 'gen_len']];
   document.getElementById('shapeBody').innerHTML = shape.map(([name, key]) => {
     const v = (d.latency && d.latency[key]) || {};
-    return `<tr><td>${name}</td><td>${fmt(v.p50)}</td><td>${fmt(v.p90)}</td><td>${fmt(v.p99)}</td></tr>`;
+    return `<tr><td>${name}</td><td>${fmt(v.avg, 0)}</td><td>${fmt(v.p50)}</td>`
+         + `<td>${fmt(v.p90)}</td><td>${fmt(v.p99)}</td></tr>`;
   }).join('');
   const pl = ((d.latency || {}).prompt_len || {}).p99;
   const lim = (d.endpoint || {}).max_model_len;
@@ -464,9 +503,26 @@ function idle(c, w, h) {
   c.fillText('idle \u2014 no traffic in this window', w / 2, h / 2);
 }
 
+function niceCeil(v) {
+  if (!(v > 0)) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(v)));
+  const steps = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+  return mag * (steps.find(s => s >= v / mag - 1e-9) || 10);
+}
+
+/* p98 rather than max: a single large prefill lands in one 2s window and
+   reads as millions of TPM, which flattens the rest onto the axis. */
+function robustMax(vals, floor) {
+  const v = vals.filter(x => x !== null && x !== undefined).sort((a, b) => a - b);
+  if (!v.length) return floor;
+  const p98 = v[Math.min(v.length - 1, Math.round(0.98 * (v.length - 1)))];
+  return niceCeil(Math.max(floor, p98));
+}
+
 function line(c, pts, pad, w, h, maxY, col, fill) {
   const x = i => pad.l + (w - pad.l - pad.r) * (pts.length < 2 ? 0 : i / (pts.length - 1));
-  const y = v => pad.t + (h - pad.t - pad.b) * (1 - v / maxY);
+  // Clamped: robustMax can sit below the series max.
+  const y = v => pad.t + (h - pad.t - pad.b) * (1 - Math.min(v, maxY) / maxY);
   c.beginPath();
   pts.forEach((p, i) => i ? c.lineTo(x(i), y(p.v)) : c.moveTo(x(i), y(p.v)));
   c.strokeStyle = col; c.lineWidth = 2; c.stroke();
@@ -489,12 +545,19 @@ function drawTokens(d) {
   const { c, w, h } = prep(cv);
   const pad = { l: 58, r: 10, t: 10, b: 18 };
   const inp = series(d, 'prompt_tpm'), out = series(d, 'gen_tpm');
-  const maxY = Math.max(1000, ...inp.map(p => p.v), ...out.map(p => p.v));
+  const tot = series(d, 'total_tpm');
+  const all = [...inp, ...out, ...tot].map(p => p.v);
+  const maxY = robustMax(all, 1000);
+  const trueMax = all.length ? Math.max(...all) : 0;
   axes(c, w, h, maxY, pad, toks);
   if (inp.length < 2 && out.length < 2) { idle(c, w, h); return; }
   if (inp.length >= 2) line(c, inp, pad, w, h, maxY, '#58a6ff', 'rgba(88,166,255,.12)');
   if (out.length >= 2) line(c, out, pad, w, h, maxY, '#3fb950', 'rgba(63,185,80,.10)');
-  legend(c, w, pad, [['input (prefill)', '#58a6ff'], ['output (decode)', '#3fb950']]);
+  if (tot.length >= 2) line(c, tot, pad, w, h, maxY, '#a371f7', null);
+  const items = [['total', '#a371f7'], ['input (prefill)', '#58a6ff'],
+                 ['output (decode)', '#3fb950']];
+  if (trueMax > maxY) items.push(['\u2191 peak ' + toks(trueMax) + ' clipped', '#8b949e']);
+  legend(c, w, pad, items);
 }
 
 function drawQueue(d) {

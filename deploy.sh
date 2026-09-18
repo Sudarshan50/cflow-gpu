@@ -25,10 +25,16 @@ set -euo pipefail
 # Configuration. Every value here is overridable from the environment and
 # every default is the value that is live on the box today; nothing is invented.
 # ---------------------------------------------------------------------------
-REPO="${REPO:-/scratch/deploy}"
+# Derived from this script's own location, NOT hardcoded: a rebuild starts by
+# cloning the repo, and the clone does not have to land at /scratch/deploy. A
+# fixed path meant running deploy.sh from a clone elsewhere silently operated
+# on /scratch/deploy instead of the checkout you were standing in.
+REPO="${REPO:-$(cd "$(dirname "$(readlink -f "$0")")" && pwd)}"
 
 DOMAIN="${DOMAIN:-cflox.store}"                    # issue-cert.sh:11
-EXPECT_IP="${EXPECT_IP:-201.79.29.187}"            # issue-cert.sh:13
+# A reclaimed spot droplet returns on a DIFFERENT public IP, so this cannot be
+# a constant or the TLS stage's DNS gate is false forever (issue-cert.sh:13).
+EXPECT_IP="${EXPECT_IP:-$(curl -s --max-time 10 https://api.ipify.org 2>/dev/null)}"
 MODEL="${MODEL:-moonshotai/Kimi-K3}"               # k3.service:39
 SERVED_NAME="${SERVED_NAME:-FW-Kimi-K3}"           # config.yaml served-model-name[0]
 
@@ -416,6 +422,13 @@ stage_secrets() {
   # so a fresh customers.tsv 401s everyone with no way to tell them what
   # changed. Point SECRETS_BUNDLE at a secrets-backup.sh archive, or drop one
   # at the default path, and this stage restores instead of generating.
+  # Fall back to the committed bundle at its conventional path. Without this
+  # the recovery depended on `sudo -E`: plain sudo drops SECRETS_BUNDLE from
+  # the environment (verified), so the stage would silently mint fresh keys and
+  # 401 every customer - the exact outcome the bundle exists to prevent, and it
+  # would not be noticed until a customer complained.
+  : "${SECRETS_BUNDLE:=$REPO/k3-secrets.enc}"
+
   if [ ! -s "$keyfile" ] && [ -s "${SECRETS_BUNDLE:-}" ]; then
     if [ "$DRY_RUN" = 1 ]; then
       printf '        + restore secrets from %s\n' "$SECRETS_BUNDLE"

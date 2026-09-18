@@ -160,10 +160,34 @@ passes the literal-value scan, because gzip compresses the keys beyond what
 Recovery on a rebuilt box:
 
 ```bash
-git clone https://github.com/Sudarshan50/cflow-gpu.git /scratch/deploy
+# The repo is PRIVATE, so the clone needs the PAT. Without it git fails with
+# "could not read Username for 'https://github.com'" on a box that has no
+# credential helper configured yet - which every fresh box is.
+git clone https://Sudarshan50:<PAT>@github.com/Sudarshan50/cflow-gpu.git /scratch/deploy
 cd /scratch/deploy
-SECRETS_BUNDLE=./k3-secrets.enc sudo -E ./deploy.sh
+./secrets-backup.sh verify k3-secrets.enc    # confirm the passphrase first
+sudo ./deploy.sh
 ```
+
+The `secrets` stage defaults `SECRETS_BUNDLE` to `$REPO/k3-secrets.enc`, so the
+committed bundle is found without an env var. That default exists because plain
+`sudo` strips `SECRETS_BUNDLE` from the environment (verified): relying on the
+operator to remember `sudo -E` would have meant silently minting fresh keys and
+401ing every customer, discovered only when one complained.
+
+**Two things must exist outside this box for recovery to work**, and neither
+can be stored in the repo, because both are needed *before* you can read it:
+
+| Needed to | Secret | Where it must live |
+|---|---|---|
+| clone the private repo | the GitHub PAT | password manager |
+| decrypt `k3-secrets.enc` | the bundle passphrase | password manager |
+
+Lose the PAT and you can still recover through the GitHub web UI. Lose the
+passphrase and the bundle is scrap: every customer must be re-keyed by hand.
+Verify the passphrase you stored actually works — `./secrets-backup.sh verify
+k3-secrets.enc` — rather than assuming, because the failure only surfaces on
+the day you cannot afford it.
 
 `deploy.sh`'s `secrets` stage restores from `SECRETS_BUNDLE` when `api-key.txt`
 is absent, and warns loudly before minting fresh credentials on what looks like

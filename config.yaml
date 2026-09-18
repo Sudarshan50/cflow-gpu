@@ -88,6 +88,10 @@ gpu-memory-utilization: 0.92
 enable-prefix-caching: true
 prefix-match-unit: 128
 
+# Emits usage.prompt_tokens_details.cached_tokens, which gateways need to bill
+# cached tokens. Read only at startup: takes effect on the next restart.
+enable-prompt-tokens-details: true
+
 # FULL_DECODE_ONLY frees ~11.7 GiB of cudagraph memory into KV
 # (1,169,808 -> 1,696,278 tokens). torch.compile does NOT engage on K3.
 compilation-config:
