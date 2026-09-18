@@ -605,7 +605,7 @@ symptom of this gap.
 ```
 
 `issue-cert.sh` is safe to re-run and does nothing unless a **public** resolver
-returns `EXPECT_IP=201.79.29.187` for `cflox.store` (`issue-cert.sh:11-13`,
+returns this host's own detected public IP for `cflox.store` (`issue-cert.sh:11-13`,
 `:20-34`). That gate exists because **a failed HTTP-01 burns Let's Encrypt rate
 limit: 5 failures per hostname per hour** (`issue-cert.sh:4-5`). Do not add a
 `--force` path, and do not retry a failure in a loop — you will lock yourself

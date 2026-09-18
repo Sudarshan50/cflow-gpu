@@ -193,6 +193,22 @@ the day you cannot afford it.
 is absent, and warns loudly before minting fresh credentials on what looks like
 a rebuild rather than doing it silently.
 
+**The bundle goes stale the moment the credentials change.** `./gen-keys.sh add`
+or `revoke` rewrites `customers.tsv`, and a bundle made before that still
+decrypts perfectly while carrying the old table — a rebuild would restore it and
+401 everyone added since. Re-run `./secrets-backup.sh backup`, then commit and
+push the new `k3-secrets.enc`, after every add, revoke, or key rotation.
+
+`verify` checks for exactly this. Beyond proving the passphrase opens the
+archive, it confirms all four files are present, that `VLLM_API_KEY` equals
+`api-key.txt` (a mismatch 401s every request past nginx, and was previously
+caught only at restore time), and that each file still matches what is live on
+this box. It exits non-zero on any of those, reporting e.g.:
+
+```
+  STALE    customers.tsv differs from live; re-run: ./secrets-backup.sh backup
+```
+
 ---
 
 ## 4. Rotation runbooks

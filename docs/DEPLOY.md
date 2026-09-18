@@ -57,17 +57,17 @@ time, not space.
 ### DNS
 
 `cflox.store` must have an **A record pointing at this box before TLS can be
-issued**. `issue-cert.sh` hardcodes `EXPECT_IP=201.79.29.187`
+issued**. `issue-cert.sh` detects this host's own public IP into `EXPECT_IP`
 (`issue-cert.sh:13`) and asks `dns.google` rather than the local resolver
 (`issue-cert.sh:20-34`); it refuses to invoke certbot until that public
 resolver agrees, because a failed HTTP-01 challenge burns Let's Encrypt rate
 limit at 5 failures per hostname per hour (`issue-cert.sh:4-5`).
 
-If the rebuilt droplet gets a **different public IP**, `EXPECT_IP` must be
-updated or `issue-cert.sh` will never fire. Note also that `ifconfig.me`
-reports `201.79.29.187` and whois attributes it to Claro Brazil; that is
-correct for this droplet in `mem1` and is not a hijack
-(`K3-DEPLOYMENT.md` §"Testing gotcha").
+A rebuilt droplet comes back on a **different public IP**, so update the A
+record to match; the detection means `EXPECT_IP` itself needs no edit. Override
+it with `EXPECT_IP=<addr>` if you need to pin a specific address. Note that
+whois may attribute the droplet's address to Claro Brazil; that is correct for
+`mem1` and is not a hijack (`K3-DEPLOYMENT.md` §"Testing gotcha").
 
 ### Packages
 
@@ -459,17 +459,14 @@ acceptable output. The classes of assertion and what each proves:
 | Dashboard is alive and honest | `:8080/`, `/api/state`, `/api/health` → 200; `server.state == "up"`; `cache.capacity_tokens > 0` (`verify-auth.sh:68-81`) | The monitor works and agrees the engine is live. It deliberately does not count nulls — empty percentile lists and a null `gpu.error` are the healthy case. |
 | End to end | `17*23` answered through the authenticated edge, asserting `391` appears anywhere in `reasoning_content + content` (`verify-auth.sh:84-91`) | A real answer traverses the whole path. Written as "digits appear" rather than equality because K3 emits its chain before the answer. |
 
-> **Known stale target.** `verify-auth.sh:9` sets `EDGE=http://127.0.0.1:8000`,
-> but the plaintext `:8000` edge was removed when the API moved to TLS
-> (`nginx/k3.conf:1-2`). On the live box nothing listens on 8000 (`ss -tln`
-> shows only 80, 443, 8001, 8080), so every `$EDGE` assertion currently fails to
-> connect — for the wrong reason. `deploy.sh`'s `verify` stage works around this
-> by running the suite **only if** something is listening on `:8000`, and
-> substituting HTTPS-edge probes otherwise (`deploy.sh:714-743`).
-> `TODO(operator):` repoint `EDGE` at `https://cflox.store` with a customer key,
-> or make it an env var, and delete that branch. Until then the `:8001` and
-> `:8080` assertions are the only ones that can run standalone; use the five
-> checks at `issue-cert.sh:141-153` for edge coverage.
+> **Fixed 2026-09-18.** `verify-auth.sh` used to set `EDGE=http://127.0.0.1:8000`,
+> an edge removed when the API moved to TLS (`nginx/k3.conf:1-2`), so every
+> `$EDGE` assertion failed to connect rather than testing anything. It now
+> targets `https://$DOMAIN` and pins the hostname to loopback with
+> `curl --resolve`, which exercises the real TLS server block before DNS
+> propagates. The workaround branch in `deploy.sh`'s `verify` stage is gone; it
+> now gates on a cert and at least one customer key being present, and skips
+> with a warning rather than reporting a spurious failure.
 
 ### 5.2 `tests/gate.sh` — the correctness gate
 

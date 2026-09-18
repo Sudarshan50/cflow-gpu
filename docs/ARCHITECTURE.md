@@ -598,15 +598,14 @@ Still loose:
    difference today, but the next `issue-cert.sh` run will silently discard those
    comments. `TODO(operator):` fold the wanted comments into
    `write_tls_server()` so they survive regeneration.
-2. **`verify-auth.sh` targets an edge that no longer exists.** It probes
-   `EDGE=http://127.0.0.1:8000` (`verify-auth.sh:9`), but `nginx/k3.conf:1-2`
-   records that "the plaintext :8000 edge was removed when the API moved to
-   TLS," and `ss -tln` confirms nothing is listening on 8000. As written the
-   script cannot pass on this box. Its assertions are still the correct
-   specification of the edge's behaviour — they just need to run against
-   `https://cflox.store` (which `issue-cert.sh:141-153` spot-checks for
-   `/v1/models` and `/invocations`) or against a loopback equivalent.
-   `TODO(operator):` repoint `verify-auth.sh` and re-run it.
+2. **`verify-auth.sh` targeted an edge that no longer existed — fixed
+   2026-09-18.** It probed `EDGE=http://127.0.0.1:8000` (`verify-auth.sh:9`),
+   but `nginx/k3.conf:1-2` records that "the plaintext :8000 edge was removed
+   when the API moved to TLS," so the script could not pass on this box. It now
+   targets `https://$DOMAIN`, pinning the hostname to loopback with
+   `curl --resolve` so it tests the real TLS server block, and distinguishes
+   the upstream key (which the edge must reject) from a customer key (which it
+   must accept). The suite passes end to end.
 3. **`config.yaml` was rewritten mid-review.** All `config.yaml` line citations
    in this document refer to the revision on disk at 2026-09-18 16:35, in which
    `max-model-len` is line 62 and `gpu-memory-utilization` is line 78. The
