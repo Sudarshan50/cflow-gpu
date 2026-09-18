@@ -412,12 +412,24 @@ Exit 0 means safe to push; exit 1 means do not. Five phases
 | literal live-value scan | the **actual** values from `api-key.txt`, `dash-password.txt`, `vllm-k3.env` and `customers.tsv`, matched literally against staged content (`secret-scan.sh:101-124`). This is what catches a credential that does not look the way the patterns expect — the dashboard password in particular matches no pattern. Values shorter than 12 characters are skipped as too noisy, and a finding prints only the first 8 characters, never the value |
 | history scan | the patterns across `git rev-list --all` — the phase that catches a key committed once and ignored later (`secret-scan.sh:128-145`) |
 
-Patterns (`secret-scan.sh:41-48`): this deployment's key prefix
-`sk-k3-[a-z0-9_-]*-[0-9a-f]{40}`, generic `sk-` keys, PEM private-key headers,
-`$apr1$` hashes, GitHub tokens, and `VLLM_API_KEY=sk-k3-` other than the
-`REPLACE_ME` placeholder. Documented placeholders — `REPLACE_ME`, `<name>`,
-`<40 hex>`, forty zeroes, `REDACTED` — are excluded so the scan does not cry
-wolf on this file or on the `*.example` twins (`secret-scan.sh:50`).
+Patterns: the upstream key shape (`sk-k3-` + 32 or more hex), the customer key
+shape (`sk-k3-<name>-` + 40 hex), generic `sk-` keys, PEM private-key headers,
+full `$apr1$` htpasswd hashes, GitHub PATs, and a populated
+`VLLM_API_KEY=sk-k3-<16+ alnum>`.
+
+Every pattern demands real key **material**, never just a prefix. This document
+legitimately writes shapes like `VLLM_API_KEY=sk-k3-<48 hex>`, and an earlier
+prefix-only pattern flagged all of them. A scan that cries wolf on its own
+documentation trains the operator to ignore it, which is the one failure mode it
+cannot afford. A placeholder allowlist (`REPLACE_ME`, `<name>`, `<N hex>`, forty
+zeroes, `REDACTED`) remains as a second line of defence.
+
+Two arguments in that script must not be reflowed, and the comments there say
+so: `git grep --cached` requires `--cached` **before** the pattern, and the
+history scan requires the revision list **after** it. Get either wrong and git
+errors to stderr, the failure is swallowed, and the scan reports a clean PASS
+having searched nothing. That bug was live in the first draft and was caught
+only by planting a real key and confirming the scan went red.
 
 A concrete manual check for the `sk-k3-` prefix, if you want one without the
 script — note it scans **committed and staged content**, not the working tree,
