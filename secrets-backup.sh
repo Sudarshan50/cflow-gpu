@@ -78,10 +78,50 @@ verify)
   in="${2:?usage: secrets-backup.sh verify <file>}"
   [ -s "$in" ] || die "no such file: $in"
   pass="$(get_pass)"
+
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
   openssl enc -d "${ENC_ARGS[@]}" -pass fd:3 -in "$in" 3<<<"$pass" \
-    | tar -tz || die "decryption failed - wrong passphrase or corrupt file"
+    | tar -xz -C "$tmp" || die "decryption failed - wrong passphrase or corrupt file"
   unset pass
-  log "bundle decrypts cleanly"
+  echo "  passphrase accepted, archive intact"
+
+  rc=0
+  for f in "${FILES[@]}"; do
+    [ -s "$tmp/$f" ] && echo "  present  $f" || { echo "  MISSING  $f"; rc=1; }
+  done
+
+  # Checked here rather than only at restore time, when it is too late to fix.
+  up="$(tr -d '\r\n' < "$tmp/api-key.txt" 2>/dev/null || true)"
+  env_key="$(sed -n 's/^VLLM_API_KEY=//p' "$tmp/vllm-k3.env" 2>/dev/null | tr -d '\r\n')"
+  if [ -n "$up" ] && [ "$up" = "$env_key" ]; then
+    echo "  consistent  vllm-k3.env VLLM_API_KEY matches api-key.txt"
+  else
+    echo "  INCONSISTENT  VLLM_API_KEY != api-key.txt; restoring this would 401 everything"
+    rc=1
+  fi
+
+  n=$(awk -F'\t' '!/^[[:space:]]*#/&&NF>=2{n++} END{print n+0}' "$tmp/customers.tsv" 2>/dev/null)
+  echo "  $n customer key(s) in the bundle"
+
+  # A bundle that decrypts but predates a key rotation restores the wrong keys.
+  if [ -s "$REPO/api-key.txt" ]; then
+    echo "  -- against the live box --"
+    for f in "${FILES[@]}"; do
+      if [ ! -s "$REPO/$f" ]; then
+        echo "  n/a      $f not on this box"
+      elif cmp -s "$tmp/$f" "$REPO/$f"; then
+        echo "  current  $f"
+      else
+        echo "  STALE    $f differs from live; re-run: ./secrets-backup.sh backup"
+        rc=1
+      fi
+    done
+  else
+    echo "  (no live secrets here to compare against)"
+  fi
+
+  [ "$rc" = 0 ] && log "bundle is usable for a rebuild" \
+                || die "bundle has problems - see above"
   ;;
 
 restore)
