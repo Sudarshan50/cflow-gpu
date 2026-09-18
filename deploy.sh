@@ -167,7 +167,8 @@ stages (in dependency order; "all" runs exactly this list):
   preflight   GPUs (/dev/kfd + rocm-smi), docker, nginx, certbot, jq, zstd,
               python3-venv, openssl, curl; /scratch mounted with room for 1.5 TB
   host        sysctl /etc/sysctl.d/99-vllm.conf (values from cloud-init.yaml),
-              /scratch mount + fstab entry, directories, ufw allow 22/80/443
+              /scratch on the boot disk (USE_SCRATCH_VOLUME=1 for the
+              DOSCRATCH volume), directories, ufw allow 22/80/443
   weights     hf download $MODEL into $HF_DIR; skipped if
               $MODEL_DIR exists
   secrets     api-key.txt, dash-password.txt, vllm-k3.env (from the .example,
@@ -205,9 +206,8 @@ EOF
 # ORDERING CONSTRAINTS ENCODED BELOW. These are the reason this script exists;
 # each one was a real failure, and the stage order is the only safe topology.
 #
-#   host    < everything      /scratch is not mounted by default and is lost on
-#                             reclaim (cloud-init.yaml:25); every path below
-#                             lives on it.
+#   host    < everything      every path below lives under /scratch, which the
+#                             host stage creates on the boot disk.
 #   weights < services        vllm-k3.env sets HF_HUB_OFFLINE=1 (line 17), so a
 #                             missing weight tree is a hard startup failure, not
 #                             a silent re-download (launch.sh:39-41).
@@ -277,17 +277,21 @@ stage_preflight() {
 
   docker info >/dev/null 2>&1 || { warn "docker daemon not responding"; bad=1; }
 
-  if mountpoint -q "$SCRATCH"; then
-    local free_gib
+  # $SCRATCH lives on the boot disk by default so a droplet snapshot carries the
+  # weights; a mounted volume is still supported. Free space is what matters,
+  # not which device provides it.
+  if [ -d "$SCRATCH" ]; then
+    local free_gib where
     free_gib="$(df -BG --output=avail "$SCRATCH" | tail -1 | tr -dc '0-9')"
-    log "  $SCRATCH mounted, ${free_gib} GiB free"
+    mountpoint -q "$SCRATCH" && where="separate volume" || where="boot disk"
+    log "  $SCRATCH on the $where, ${free_gib} GiB free"
     if [ -d "$MODEL_DIR" ]; then
       log "  weights present, skipping the ${MIN_FREE_GIB} GiB free-space requirement"
     elif [ "${free_gib:-0}" -lt "$MIN_FREE_GIB" ]; then
       warn "only ${free_gib} GiB free; the weight pull needs ~${MIN_FREE_GIB} GiB"; bad=1
     fi
   else
-    warn "$SCRATCH is not mounted - run the host stage"
+    warn "$SCRATCH does not exist - run the host stage"
   fi
 
   [ "$bad" = 0 ] || die "preflight failed; fix the warnings above (nothing was changed)"
@@ -332,31 +336,37 @@ EOF
     log "  sysctl tuning already in effect and persisted in $sysctl_f"
   fi
 
-  # /scratch is an ephemeral 40T volume that is NOT mounted by default and is
-  # lost when the droplet is reclaimed (cloud-init.yaml:25).
-  if ! grep -q DOSCRATCH /etc/fstab; then
-    log "  adding DOSCRATCH to /etc/fstab"
-    if [ "$DRY_RUN" = 1 ]; then
-      printf '        + append LABEL=DOSCRATCH line to /etc/fstab\n'
-    else
-      printf 'LABEL=DOSCRATCH %s ext4 discard,errors=remount-ro 0 2\n' "$SCRATCH" >> /etc/fstab
-    fi
-  else
-    log "  fstab already has the DOSCRATCH entry"
-  fi
+  # $SCRATCH is a plain directory on the boot disk by default. That is what
+  # makes a droplet snapshot self-contained: restoring one brings the 1.5 TB of
+  # weights with it, so the box serves in minutes instead of re-downloading.
+  # The old 40 TB DOSCRATCH volume is opt-in via USE_SCRATCH_VOLUME=1, and is
+  # NOT mounted at $SCRATCH otherwise - doing so would hide the weights that
+  # live there now.
   run mkdir -p "$SCRATCH"
-  if ! mountpoint -q "$SCRATCH"; then
+  if [ "${USE_SCRATCH_VOLUME:-0}" != 1 ]; then
+    log "  $SCRATCH on the boot disk (USE_SCRATCH_VOLUME=1 to use the DOSCRATCH volume)"
+  elif mountpoint -q "$SCRATCH"; then
+    log "  $SCRATCH already mounted"
+  else
+    if ! grep -qE "^[^#]*DOSCRATCH[[:space:]]+$SCRATCH[[:space:]]" /etc/fstab; then
+      log "  adding DOSCRATCH to /etc/fstab"
+      if [ "$DRY_RUN" = 1 ]; then
+        printf '        + append LABEL=DOSCRATCH line to /etc/fstab\n'
+      else
+        printf 'LABEL=DOSCRATCH %s ext4 discard,errors=remount-ro,nofail 0 2\n' "$SCRATCH" >> /etc/fstab
+      fi
+    fi
     # No mkfs here on purpose: docs §4.1 marks it destructive and first-setup
     # only. An unlabelled disk is an operator decision, not a script's.
     if [ "$DRY_RUN" = 1 ] || blkid -L DOSCRATCH >/dev/null 2>&1; then
       run mount "$SCRATCH"
+      log "  $SCRATCH mounted from the DOSCRATCH volume"
     else
       die "no filesystem labelled DOSCRATCH. TODO(operator): create it once with
        mkfs.ext4 -L DOSCRATCH <device>   # DESTRUCTIVE, docs §4.1
      then re-run: $0 host"
     fi
   fi
-  log "  $SCRATCH mounted"
 
   run mkdir -p "$HF_DIR" "$RESULTS_DIR" "$REPO" "$DASH_DIR" /var/www/certbot
   # Only these three ports are open on the live box; 8000/8080 were closed when

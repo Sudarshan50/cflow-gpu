@@ -1,7 +1,8 @@
 [Unit]
 Description=Kimi-K3 dashboard (loopback only, fronted by nginx)
-# Reads /scratch/results for the benchmark file list, so the mount must exist
-# first. RequiresMountsFor implies both Requires= and After=.
+# Reads /scratch/results for the benchmark file list, so the filesystem holding
+# it must be up first. RequiresMountsFor implies both Requires= and After=, and
+# resolves to -.mount now that /scratch is on the boot disk.
 RequiresMountsFor=/scratch
 # Only a Wants=: the dashboard is a monitor, so it must still start (and show
 # the engine as down) when k3 is stopped or crash-looping.

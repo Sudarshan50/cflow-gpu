@@ -7,9 +7,15 @@ active, MXFP4 weights) served by vLLM on 8× AMD Instinct MI355X, published at
 per-customer API keys with per-key rate and concurrency caps, and closes the
 unauthenticated routes vLLM's own `--api-key` leaves open
 (`docs/K3-DEPLOYMENT.md` §11 "Why `--api-key` alone is NOT sufficient").
-The box runs on a DigitalOcean MI355X spot droplet whose `/scratch` disk is
-**ephemeral and destroyed on reclaim**, so everything needed to stand the
-service back up from nothing lives here.
+The box runs on a DigitalOcean MI355X spot droplet that can be reclaimed at any
+time, so everything needed to stand the service back up from nothing lives here.
+
+Since 2026-09-18 `/scratch` is a directory on the **boot disk**, not the
+separate 40 TB volume. That makes a droplet snapshot self-contained: it carries
+the 1.5 TB of weights, so a restored droplet serves in minutes instead of
+re-downloading them. Mounting a volume at `/scratch` would hide that data —
+`deploy.sh`'s `host` stage only does so when asked with `USE_SCRATCH_VOLUME=1`,
+and attaches it at `/mnt/bulk` otherwise.
 
 ---
 
@@ -148,7 +154,7 @@ handling and rotation are in [`docs/SECRETS.md`](docs/SECRETS.md).
    vLLM, VLLM_API_KEY enforced  ◄─────────────────────┘
         │
         ▼
-   /scratch/hf/hub/models--moonshotai--Kimi-K3   (~1.5 TB, ephemeral disk)
+   /scratch/hf/hub/models--moonshotai--Kimi-K3   (~1.5 TB, boot disk)
 ```
 
 Both upstreams are defined in `nginx/k3.conf`. `/metrics` and `/health` are

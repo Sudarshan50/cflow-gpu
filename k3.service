@@ -1,7 +1,9 @@
 [Unit]
 Description=vLLM Kimi-K3 (8x MI355X)
-# Adds BOTH Requires= and After= for scratch.mount, so the bind mounts
-# cannot be attempted before /scratch exists. A separate After= line is
+# Adds BOTH Requires= and After= for whichever mount provides /scratch, so the
+# bind mounts cannot be attempted before it is there. Now that /scratch is a
+# directory on the boot disk this resolves to -.mount; it resolves to
+# scratch.mount again if a volume is mounted there. A separate After= line is
 # redundant (systemd.unit(5): RequiresMountsFor "automatically adds
 # dependencies of type Requires= and After=").
 RequiresMountsFor=/scratch

@@ -22,10 +22,11 @@ write_files:
     content: |
       #!/bin/bash
       set -euo pipefail
-      # 1. scratch (NOT mounted by default; non-persistent, lost on reclaim)
-      grep -q DOSCRATCH /etc/fstab || \
-        echo 'LABEL=DOSCRATCH /scratch ext4 discard,errors=remount-ro 0 2' >> /etc/fstab
-      mkdir -p /scratch && mountpoint -q /scratch || mount /scratch
+      # 1. scratch, on the BOOT DISK. Everything the box needs to serve lives
+      # here, so a droplet snapshot is self-contained: restoring one brings the
+      # 1.5 TB of weights with it and the box serves in minutes instead of
+      # re-downloading. Do not mount the DOSCRATCH volume here - it would hide
+      # the weights. Attach it at /mnt/bulk if you want the extra space.
       mkdir -p /scratch/hf /scratch/results /scratch/deploy
 
       # 2. weights. Re-downloading IS optimal: measured 2.23 GB/s (~700s).
