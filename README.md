@@ -21,8 +21,27 @@ and attaches it at `/mnt/bulk` otherwise.
 
 ## Quick start
 
-Four steps. The full version, with ordering constraints and failure modes, is
-[`docs/DEPLOY.md`](docs/DEPLOY.md).
+There are two ways to stand this up. **Prefer the snapshot.**
+
+### From a snapshot — about 5 minutes
+
+A droplet snapshot carries the weights, the image, the secrets and the
+certificate, so nothing is downloaded and nothing is restored:
+
+1. Create a droplet from the snapshot (same MI355X spot type).
+2. Point the `cflox.store` A record at its new IP.
+3. Wait ~5 minutes — the stack auto-starts, the engine loads weights in ~137 s.
+4. `cd /scratch/deploy && ./verify-auth.sh`
+
+No `deploy.sh`, no PAT, no bundle passphrase. Existing customer keys keep
+working. Full detail, including how to take the snapshot:
+[`docs/SNAPSHOT.md`](docs/SNAPSHOT.md).
+
+### From nothing — under an hour
+
+Use this when no usable snapshot exists; it is also how you build the box that
+becomes the first snapshot. The full version, with ordering constraints and
+failure modes, is [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 1. **Create the droplet by hand in the DigitalOcean Control Panel.** This step
    is not automatable — see [What is deliberately not automated](#what-is-deliberately-not-automated).
@@ -60,6 +79,10 @@ Four steps. The full version, with ordering constraints and failure modes, is
    instead of restoring.
 
    It must end in `verification passed`, which includes `GATE PASS`.
+
+5. **Take a snapshot** so the next rebuild is the five-minute path:
+   `sudo ./snapshot-prep.sh`, then snapshot from the Control Panel. See
+   [`docs/SNAPSHOT.md`](docs/SNAPSHOT.md).
 
 Weights are ~1.5 TB and download at roughly 2.23 GB/s (~700 s)
 (`docs/K3-DEPLOYMENT.md` §3 "Model"); the engine then takes about 6 minutes to
