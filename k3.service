@@ -1,0 +1,42 @@
+[Unit]
+Description=vLLM Kimi-K3 (8x MI355X)
+# Adds BOTH Requires= and After= for scratch.mount, so the bind mounts
+# cannot be attempted before /scratch exists. A separate After= line is
+# redundant (systemd.unit(5): RequiresMountsFor "automatically adds
+# dependencies of type Requires= and After=").
+RequiresMountsFor=/scratch
+After=docker.service
+Requires=docker.service
+
+# Stop retrying after 5 failures in 30 min rather than looping forever.
+StartLimitIntervalSec=1800
+StartLimitBurst=5
+
+[Service]
+Type=exec
+Restart=always
+# Docker's own backoff CANNOT work here: it resets to 100ms once a container
+# has run >=10s (moby restartmanager.go), and this model takes ~6 min to load,
+# so every crash clears that threshold. systemd escalates instead.
+RestartSec=30s
+RestartSteps=4
+RestartMaxDelaySec=10min
+TimeoutStartSec=900
+TimeoutStopSec=120
+
+EnvironmentFile=/scratch/deploy/vllm-k3.env
+ExecStartPre=-/usr/bin/docker rm -f k3
+ExecStart=/usr/bin/docker run --rm --name k3 \
+  --device /dev/kfd --device /dev/dri --group-add video \
+  --ipc host --network host --security-opt seccomp=unconfined --cap-add SYS_PTRACE \
+  --shm-size 64g \
+  --log-opt max-size=100m --log-opt max-file=5 \
+  -v /scratch/hf:/hf -v /scratch/results:/results \
+  --env-file /scratch/deploy/vllm-k3.env \
+  --entrypoint vllm \
+  vllm/vllm-openai-rocm@sha256:5aa7e626ff73672f5ca7aae46754570488c23d33ca1ac90756a1d2d1a3fe099b \
+  serve moonshotai/Kimi-K3 --config /hf/config.yaml
+ExecStop=/usr/bin/docker stop -t 60 k3
+
+[Install]
+WantedBy=multi-user.target

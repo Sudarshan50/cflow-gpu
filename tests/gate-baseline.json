@@ -1,0 +1,8 @@
+{
+  "tier1": true,
+  "tier2_correct": 16,
+  "tier2_total": 16,
+  "tier3": true,
+  "tier3_prompt_tokens": 12026,
+  "recorded": "2026-09-18T12:25:45Z"
+}

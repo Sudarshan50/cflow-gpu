@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Blocks a commit that stages a credential.
+#
+# Hooks are NOT transferred by clone or push, so this file is committed under
+# .githooks/ and activated by pointing core.hooksPath at it:
+#
+#     git config core.hooksPath .githooks
+#
+# deploy.sh does not do this for you - it is a developer-workstation concern,
+# not a production one. Bypass in a genuine emergency with `git commit -n`,
+# and understand that doing so is how keys reach GitHub.
+exec "$(git rev-parse --show-toplevel)/secret-scan.sh"

@@ -1,0 +1,38 @@
+[Unit]
+Description=Kimi-K3 dashboard (loopback only, fronted by nginx)
+# Reads /scratch/results for the benchmark file list, so the mount must exist
+# first. RequiresMountsFor implies both Requires= and After=.
+RequiresMountsFor=/scratch
+# Only a Wants=: the dashboard is a monitor, so it must still start (and show
+# the engine as down) when k3 is stopped or crash-looping.
+Wants=k3.service
+After=k3.service network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=/opt/k3dash
+ExecStart=/usr/bin/python3 server.py
+Restart=always
+RestartSec=5s
+
+# Defaults from server.py, made explicit so the unit is the source of truth.
+# DASH_ADDR stays loopback: the app has no authentication of its own, and
+# nginx's basic auth in conf.d/k3-dash.inc is the only way in. Binding
+# 0.0.0.0 here would re-open the unauthenticated hole that was just closed.
+Environment=DASH_ADDR=127.0.0.1
+Environment=DASH_PORT=8080
+Environment=VLLM_BASE_URL=http://127.0.0.1:8001
+Environment=PUBLIC_URL=https://cflox.store/v1
+Environment=ACCESS_LOG=/var/log/nginx/k3-usage.log
+Environment=CERT_PATH=/etc/letsencrypt/live/cflox.store/fullchain.pem
+Environment=API_KEY_FILE=/scratch/deploy/api-key.txt
+
+# Read-only everywhere (ProtectSystem=strict), which is all it needs: it
+# scrapes loopback, tails the nginx log, and shells out to rocm-smi.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

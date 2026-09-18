@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kimi-K3 endpoint monitor</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3;
+    --muted:#8b949e; --good:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#58a6ff;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:14px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line);
+           display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  h1 { font-size:16px; margin:0; font-weight:600; }
+  .pill { padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+  .pill.up{background:rgba(63,185,80,.15); color:var(--good); border:1px solid var(--good);}
+  .pill.down{background:rgba(248,81,73,.15); color:var(--bad); border:1px solid var(--bad);}
+  .pill.wait{background:rgba(210,153,34,.15); color:var(--warn); border:1px solid var(--warn);}
+  .muted { color:var(--muted); font-size:12px; }
+  main { padding:20px; display:grid; gap:16px; max-width:1500px; }
+  .panel { background:var(--panel); border:1px solid var(--line);
+           border-radius:8px; padding:16px; }
+  .panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em;
+              color:var(--muted); margin:0 0 12px; font-weight:600; }
+  .panel h2 .note { text-transform:none; letter-spacing:0; font-weight:400; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr));
+          gap:12px; }
+  .kpi { background:#0d1117; border:1px solid var(--line);
+         border-radius:6px; padding:10px 12px; }
+  .kpi .label { font-size:11px; color:var(--muted); text-transform:uppercase;
+                letter-spacing:.05em; }
+  .kpi .val { font-size:22px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .kpi .sub { font-size:11px; color:var(--muted); }
+  .kpi.good .val { color:var(--good); } .kpi.warn .val { color:var(--warn); }
+  .kpi.bad .val { color:var(--bad); }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th,td { text-align:right; padding:7px 10px; border-bottom:1px solid var(--line);
+          white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:var(--muted); font-size:11px; text-transform:uppercase;
+       letter-spacing:.05em; font-weight:600; }
+  /* Wide tables scroll inside their panel instead of stretching the page. */
+  .tablewrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  canvas { width:100%; height:190px; display:block; }
+  .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr));
+           gap:16px; }
+  /* Grid children default to min-width:auto, which lets a wide table push the
+     column past its track and overflow the viewport. */
+  .grid2 > *, main > * { min-width:0; }
+  .gpurow { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .gpurow .name { width:56px; font-size:12px; color:var(--muted); }
+  .gpubar { flex:1; height:16px; background:#21262d; border-radius:4px;
+            overflow:hidden; }
+  .gpubar > div { height:100%; background:var(--good); width:0;
+                  transition:width .4s ease; }
+  .gpurow .pct { width:96px; font-size:12px; text-align:right;
+                 font-variant-numeric:tabular-nums; }
+  .bar { height:10px; background:#21262d; border-radius:999px;
+         overflow:hidden; margin:10px 0; }
+  .bar > div { height:100%; background:var(--accent); width:0;
+               transition:width .4s ease; }
+  .alert { padding:9px 12px; border-radius:6px; font-size:13px; margin-bottom:8px; }
+  .alert.warn { border:1px solid var(--warn); background:rgba(210,153,34,.12);
+                color:var(--warn); }
+  .alert.bad { border:1px solid var(--bad); background:rgba(248,81,73,.12);
+               color:var(--bad); }
+  .ok { border:1px solid var(--good); background:rgba(63,185,80,.10);
+        color:var(--good); padding:9px 12px; border-radius:6px; font-size:13px; }
+  .nodata { color:var(--muted); font-style:italic; font-size:13px; }
+  code { background:#0d1117; padding:1px 5px; border-radius:3px; font-size:12px; }
+  .tag { font-size:11px; padding:1px 6px; border-radius:4px; background:#21262d;
+         color:var(--muted); }
+
+  /* Tablet and phone. minmax(420px,...) above cannot fit a narrower viewport,
+     so the two-up panels collapse to one column and the secondary table
+     columns (.opt) drop out rather than forcing a sideways scroll for the
+     numbers that matter. */
+  @media (max-width:760px) {
+    main { padding:12px; gap:12px; }
+    .panel { padding:12px; }
+    .grid2 { grid-template-columns:1fr; }
+    header { padding:12px 14px; gap:8px 12px; }
+    h1 { font-size:15px; }
+    #endpointMeta { flex-basis:100%; order:3; }
+    #clock { margin-left:0 !important; }
+    .kpis { grid-template-columns:repeat(auto-fit,minmax(116px,1fr)); gap:8px; }
+    .kpi { padding:8px 10px; }
+    .kpi .val { font-size:18px; }
+    th,td { padding:6px 8px; }
+    canvas { height:160px; }
+    .opt { display:none; }
+  }
+  @media (max-width:430px) {
+    .kpis { grid-template-columns:repeat(2,1fr); }
+    canvas { height:140px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Kimi-K3 &middot; endpoint monitor</h1>
+  <span id="state" class="pill wait">connecting</span>
+  <span class="muted" id="endpointMeta"></span>
+  <span class="muted" id="clock" style="margin-left:auto"></span>
+</header>
+
+<main>
+  <div id="alertPanel" class="panel" style="display:none">
+    <h2>Needs attention</h2>
+    <div id="alerts"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Service <span class="note">&mdash; engine gauges now, traffic over the last 15 min</span></h2>
+    <div class="kpis" id="kpis"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h2>Token throughput <span class="note">&mdash; tokens/min, input vs output</span></h2>
+      <canvas id="chartTokens"></canvas>
+    </div>
+    <div class="panel">
+      <h2>Concurrency <span class="note">&mdash; in flight vs waiting for a slot</span></h2>
+      <canvas id="chartQueue"></canvas>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Per-customer usage <span class="note">&mdash; last 15 min, from the nginx usage log</span></h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>customer</th><th>requests</th><th>share</th><th>errors</th>
+          <th class="opt">429</th><th>p50</th><th>p95</th>
+          <th class="opt">sent</th><th class="opt">received</th>
+          <th class="opt">IPs</th><th>last seen</th>
+        </tr></thead>
+        <tbody id="custBody"></tbody>
+      </table>
+    </div>
+    <div class="muted" id="custNote" style="margin-top:8px"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h2>Serving latency <span class="note">&mdash; 60s window, engine-side</span></h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>metric</th><th>p50</th><th>p90</th><th>p99</th></tr></thead>
+          <tbody id="latBody"></tbody>
+        </table>
+      </div>
+      <div class="muted" style="margin-top:8px">
+        Interpolated from Prometheus histogram buckets, so these are
+        bucket-bounded approximations. Queue time above zero means requests
+        are waiting for a decode slot rather than being served immediately.
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Response status <span class="note">&mdash; last 15 min at the edge</span></h2>
+      <div class="kpis" id="statusKpis"></div>
+      <h2 style="margin-top:16px">Recent rejections</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>time</th><th>customer</th><th>status</th><th>path</th>
+            <th class="opt">ip</th></tr></thead>
+          <tbody id="errBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h2>KV cache headroom</h2>
+      <div class="kpis" id="capKpis"></div>
+      <div class="bar"><div id="kvBar"></div></div>
+      <div class="muted" id="capNote"></div>
+    </div>
+    <div class="panel">
+      <h2>Prefix cache reuse <span class="note">&mdash; prompt tokens served from cache</span></h2>
+      <canvas id="chartCache"></canvas>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h2>GPU utilisation</h2>
+      <div id="gpuList"></div>
+      <div class="muted" id="gpuMeta"></div>
+    </div>
+    <div class="panel">
+      <h2>Request shape <span class="note">&mdash; 60s window, tokens per request</span></h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>metric</th><th>p50</th><th>p90</th><th>p99</th></tr></thead>
+          <tbody id="shapeBody"></tbody>
+        </table>
+      </div>
+      <div class="muted" id="shapeNote" style="margin-top:8px"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const DASH = '\u2014';
+const fmt = (v, d = 0) =>
+  (v === null || v === undefined || Number.isNaN(v))
+    ? DASH
+    : Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const ms = v => (v === null || v === undefined) ? DASH : fmt(v * 1000, 1) + ' ms';
+const secs = v => {
+  if (v === null || v === undefined) return DASH;
+  return v >= 1 ? fmt(v, 2) + ' s' : fmt(v * 1000, 0) + ' ms';
+};
+const pct = (v, d = 1) =>
+  (v === null || v === undefined) ? DASH : fmt(v * 100, d) + '%';
+const toks = v => {
+  if (v === null || v === undefined) return DASH;
+  if (v >= 1e6) return fmt(v / 1e6, 2) + 'M';
+  if (v >= 1e4) return fmt(v / 1e3, 1) + 'k';
+  return fmt(v);
+};
+const bytes = v => {
+  if (v === null || v === undefined) return DASH;
+  if (v >= 1e9) return fmt(v / 1e9, 2) + ' GB';
+  if (v >= 1e6) return fmt(v / 1e6, 1) + ' MB';
+  if (v >= 1e3) return fmt(v / 1e3, 1) + ' kB';
+  return fmt(v) + ' B';
+};
+const ago = ts => {
+  if (!ts) return DASH;
+  const d = Date.now() / 1000 - ts;
+  if (d < 60) return fmt(d, 0) + 's ago';
+  if (d < 3600) return fmt(d / 60, 0) + 'm ago';
+  return fmt(d / 3600, 1) + 'h ago';
+};
+
+let last = null;
+
+function setState(s, ep) {
+  const el = document.getElementById('state');
+  const map = { up: ['up', 'serving'], connecting: ['wait', 'connecting'],
+                unreachable: ['down', 'engine unreachable'],
+                http_error: ['down', 'metrics http error'],
+                no_metrics: ['down', 'no metrics'],
+                monitor_error: ['down', 'monitor error'] };
+  const [cls, label] = map[s.state] || ['down', s.state];
+  el.className = 'pill ' + cls;
+  el.textContent = label;
+
+  const parts = [];
+  if (ep.model) parts.push(ep.model);
+  if (ep.max_model_len) parts.push(toks(ep.max_model_len) + ' ctx');
+  if (ep.public_url) parts.push(ep.public_url);
+  if (ep.cert_days_left !== null && ep.cert_days_left !== undefined)
+    parts.push('cert ' + fmt(ep.cert_days_left, 0) + 'd left');
+  document.getElementById('endpointMeta').textContent = parts.join('  \u00b7  ');
+}
+
+function kpi(label, val, sub, cls) {
+  return `<div class="kpi ${cls || ''}"><div class="label">${label}</div>
+          <div class="val">${val}</div><div class="sub">${sub || ''}</div></div>`;
+}
+
+function renderAlerts(d) {
+  const a = d.alerts || [];
+  const panel = document.getElementById('alertPanel');
+  if (!a.length) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  document.getElementById('alerts').innerHTML =
+    a.map(x => `<div class="alert ${x.level}">${x.text}</div>`).join('');
+}
+
+function renderKpis(d) {
+  const w = d.window || {};
+  const L = d.latest || {};
+  const ac = d.access || {};
+  const cap = d.capacity || {};
+  const ttft = ((d.latency || {}).ttft || {}).p50;
+  const errRate = ac.error_rate;
+  const kv = cap.kv_usage;
+
+  document.getElementById('kpis').innerHTML = [
+    kpi('Requests / min', fmt(ac.req_pm, 1),
+        fmt(ac.requests) + ' in 15 min'),
+    kpi('In flight', fmt(L.running), 'decoding now'),
+    kpi('Queued', fmt(L.waiting), 'waiting for a slot',
+        L.waiting > 0 ? 'warn' : ''),
+    kpi('Error rate', errRate === null || errRate === undefined ? DASH : pct(errRate),
+        '4xx + 5xx at the edge',
+        errRate > 0.25 ? 'bad' : (errRate > 0.02 ? 'warn' : 'good')),
+    kpi('TTFT p50', secs(ttft), 'time to first token'),
+    kpi('Output tokens / min', toks(w.gen_tpm), 'decode'),
+    kpi('Input tokens / min', toks(w.prompt_tpm), 'prefill'),
+    kpi('KV cache', kv === null || kv === undefined ? DASH : pct(kv, 1),
+        cap.capacity_tokens ? toks(cap.used_tokens) + ' / ' + toks(cap.capacity_tokens) : 'utilisation',
+        kv >= 0.9 ? 'bad' : (kv >= 0.7 ? 'warn' : 'good')),
+    kpi('Prefix cache', pct(cap.window_hit_rate !== null && cap.window_hit_rate !== undefined
+        ? cap.window_hit_rate : cap.lifetime_hit_rate),
+        'prompt tokens reused'),
+    kpi('Completed', fmt(L.success_total), 'requests since start')
+  ].join('');
+}
+
+function renderCustomers(d) {
+  const ac = d.access || {};
+  const rows = ac.customers || [];
+  document.getElementById('custBody').innerHTML = rows.length
+    ? rows.map(c => {
+        const unauth = c.customer === '(unauthenticated)';
+        const name = unauth
+          ? `<span class="tag">unauthenticated</span>`
+          : `<code>${c.customer}</code>`;
+        return `<tr>
+          <td>${name}</td>
+          <td>${fmt(c.requests)}</td>
+          <td>${pct(c.share, 0)}</td>
+          <td${c.errors ? ' style="color:var(--bad)"' : ''}>${fmt(c.errors)}</td>
+          <td class="opt"${c.throttled ? ' style="color:var(--warn)"' : ''}>${fmt(c.throttled)}</td>
+          <td>${secs(c.p50_s)}</td>
+          <td>${secs(c.p95_s)}</td>
+          <td class="opt">${bytes(c.in_bytes)}</td>
+          <td class="opt">${bytes(c.out_bytes)}</td>
+          <td class="opt">${fmt(c.distinct_ips)}</td>
+          <td>${ago(c.last_seen)}</td>
+        </tr>`;
+      }).join('')
+    : `<tr><td colspan="11" class="nodata">no requests in the last 15 minutes</td></tr>`;
+
+  document.getElementById('custNote').textContent = ac.available
+    ? `p50/p95 are edge round-trip times for successful calls, so they include `
+      + `the full streaming response, not just first token. Source: ${ac.path}`
+    : `usage log unavailable: ${ac.error || 'unknown error'}`;
+}
+
+function renderStatus(d) {
+  const s = (d.access || {}).by_status || {};
+  const ok = s['2xx'] || 0;
+  document.getElementById('statusKpis').innerHTML = [
+    kpi('2xx', fmt(ok), 'served', ok ? 'good' : ''),
+    kpi('401', fmt(s.s401), 'bad or missing key', s.s401 ? 'warn' : ''),
+    kpi('429', fmt(s.s429), 'rate limited', s.s429 ? 'warn' : ''),
+    kpi('4xx total', fmt(s['4xx']), 'client errors'),
+    kpi('5xx', fmt(s['5xx']), 'server errors', s['5xx'] ? 'bad' : 'good')
+  ].join('');
+
+  const errs = (d.access || {}).recent_errors || [];
+  document.getElementById('errBody').innerHTML = errs.length
+    ? errs.map(e => `<tr>
+        <td>${new Date(e.ts * 1000).toLocaleTimeString()}</td>
+        <td>${e.cust === '(none)' ? '<span class="tag">none</span>' : '<code>' + e.cust + '</code>'}</td>
+        <td style="color:${e.status >= 500 ? 'var(--bad)' : 'var(--warn)'}">${e.status}</td>
+        <td>${e.path}</td>
+        <td class="muted opt">${e.ip}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="5" class="nodata">no rejected requests</td></tr>`;
+}
+
+function renderCapacity(d) {
+  const c = d.capacity || {};
+  const kv = c.kv_usage;
+  document.getElementById('capKpis').innerHTML = [
+    kpi('KV in use', pct(kv, 1), c.capacity_tokens
+        ? toks(c.used_tokens) + ' of ' + toks(c.capacity_tokens) + ' tokens' : ''),
+    kpi('Preemptions', fmt(c.preemptions), c.window_preempted
+        ? fmt(c.window_preempted) + ' in the last minute' : 'none recently',
+        c.window_preempted ? 'warn' : ''),
+    kpi('Prefix caching', c.prefix_caching === false ? 'off'
+        : (c.prefix_caching ? 'on' : DASH),
+        'block size ' + fmt(c.block_size),
+        c.prefix_caching === false ? 'warn' : 'good'),
+    kpi('Reused lifetime', pct(c.lifetime_hit_rate), 'since engine start')
+  ].join('');
+  document.getElementById('kvBar').style.width =
+    (kv === null || kv === undefined) ? '0%' : Math.min(100, kv * 100) + '%';
+  document.getElementById('capNote').textContent = c.capacity_tokens
+    ? `Capacity is shared: one 128k-token request can hold ${
+        pct(131072 / c.capacity_tokens, 1)} of the cache on its own.`
+    : '';
+}
+
+function render(d) {
+  last = d;
+  setState(d.server, d.endpoint || {});
+  document.getElementById('clock').textContent =
+    new Date(d.now * 1000).toLocaleTimeString();
+
+  renderAlerts(d);
+  renderKpis(d);
+  renderCustomers(d);
+  renderStatus(d);
+  renderCapacity(d);
+
+  const rows = [['TTFT', 'ttft'], ['Inter-token latency', 'itl'],
+                ['Time per output token', 'tpot'], ['End to end', 'e2el'],
+                ['Queue time', 'queue']];
+  document.getElementById('latBody').innerHTML = rows.map(([name, key]) => {
+    const v = (d.latency && d.latency[key]) || {};
+    return `<tr><td>${name}</td><td>${ms(v.p50)}</td><td>${ms(v.p90)}</td><td>${ms(v.p99)}</td></tr>`;
+  }).join('');
+
+  const shape = [['Prompt tokens', 'prompt_len'], ['Generated tokens', 'gen_len']];
+  document.getElementById('shapeBody').innerHTML = shape.map(([name, key]) => {
+    const v = (d.latency && d.latency[key]) || {};
+    return `<tr><td>${name}</td><td>${fmt(v.p50)}</td><td>${fmt(v.p90)}</td><td>${fmt(v.p99)}</td></tr>`;
+  }).join('');
+  const pl = ((d.latency || {}).prompt_len || {}).p99;
+  const lim = (d.endpoint || {}).max_model_len;
+  document.getElementById('shapeNote').textContent = (pl && lim)
+    ? `Largest recent prompts reach ${pct(pl / lim, 0)} of the ${toks(lim)}-token limit.`
+    : 'Prompt sizes clients are actually sending, useful for spotting a harness that is about to hit the context limit.';
+
+  const g = d.gpu || {};
+  document.getElementById('gpuList').innerHTML = (g.per_card && g.per_card.length)
+    ? g.per_card.map(c => `
+        <div class="gpurow">
+          <span class="name">${c.card}</span>
+          <span class="gpubar"><div style="width:${c.use === null ? 0 : c.use}%"></div></span>
+          <span class="pct">${fmt(c.use)}% &middot; vram ${fmt(c.vram)}%</span>
+        </div>`).join('')
+    : `<div class="nodata">${g.error || 'waiting for rocm-smi sample'}</div>`;
+  document.getElementById('gpuMeta').textContent =
+    (g.mean_use === null || g.mean_use === undefined)
+      ? '' : `mean utilisation ${fmt(g.mean_use, 1)}% \u00b7 mean VRAM ${fmt(g.mean_vram, 1)}%`;
+
+  drawTokens(d);
+  drawQueue(d);
+  drawCache(d);
+}
+
+function prep(cv) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const c = cv.getContext('2d');
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, w, h);
+  return { c, w, h };
+}
+
+function axes(c, w, h, maxY, pad, fmtY) {
+  c.strokeStyle = '#30363d'; c.fillStyle = '#8b949e';
+  c.font = '10px ui-sans-serif'; c.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + (h - pad.t - pad.b) * i / 4;
+    c.beginPath(); c.moveTo(pad.l, y); c.lineTo(w - pad.r, y); c.stroke();
+    c.textAlign = 'right'; c.textBaseline = 'middle';
+    c.fillText((fmtY || fmt)(maxY * (1 - i / 4)), pad.l - 6, y);
+  }
+}
+
+function series(d, key) {
+  return (d.series || []).map(s => ({ ts: s.ts, v: s[key] })).filter(p => p.v !== null);
+}
+
+function idle(c, w, h) {
+  c.fillStyle = '#8b949e'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.font = '12px ui-sans-serif';
+  c.fillText('idle \u2014 no traffic in this window', w / 2, h / 2);
+}
+
+function line(c, pts, pad, w, h, maxY, col, fill) {
+  const x = i => pad.l + (w - pad.l - pad.r) * (pts.length < 2 ? 0 : i / (pts.length - 1));
+  const y = v => pad.t + (h - pad.t - pad.b) * (1 - v / maxY);
+  c.beginPath();
+  pts.forEach((p, i) => i ? c.lineTo(x(i), y(p.v)) : c.moveTo(x(i), y(p.v)));
+  c.strokeStyle = col; c.lineWidth = 2; c.stroke();
+  if (fill) {
+    c.lineTo(x(pts.length - 1), y(0)); c.lineTo(x(0), y(0)); c.closePath();
+    c.fillStyle = fill; c.fill();
+  }
+}
+
+function legend(c, w, pad, items) {
+  c.textAlign = 'right'; c.textBaseline = 'top'; c.font = '11px ui-sans-serif';
+  items.forEach(([label, col], i) => {
+    c.fillStyle = col;
+    c.fillText(label, w - pad.r, pad.t + i * 13);
+  });
+}
+
+function drawTokens(d) {
+  const cv = document.getElementById('chartTokens');
+  const { c, w, h } = prep(cv);
+  const pad = { l: 58, r: 10, t: 10, b: 18 };
+  const inp = series(d, 'prompt_tpm'), out = series(d, 'gen_tpm');
+  const maxY = Math.max(1000, ...inp.map(p => p.v), ...out.map(p => p.v));
+  axes(c, w, h, maxY, pad, toks);
+  if (inp.length < 2 && out.length < 2) { idle(c, w, h); return; }
+  if (inp.length >= 2) line(c, inp, pad, w, h, maxY, '#58a6ff', 'rgba(88,166,255,.12)');
+  if (out.length >= 2) line(c, out, pad, w, h, maxY, '#3fb950', 'rgba(63,185,80,.10)');
+  legend(c, w, pad, [['input (prefill)', '#58a6ff'], ['output (decode)', '#3fb950']]);
+}
+
+function drawQueue(d) {
+  const cv = document.getElementById('chartQueue');
+  const { c, w, h } = prep(cv);
+  const pad = { l: 58, r: 10, t: 10, b: 18 };
+  const run = series(d, 'running'), wait = series(d, 'waiting');
+  const maxY = Math.max(8, ...run.map(p => p.v), ...wait.map(p => p.v));
+  axes(c, w, h, maxY, pad);
+  if (run.length < 2 && wait.length < 2) { idle(c, w, h); return; }
+  if (run.length >= 2) line(c, run, pad, w, h, maxY, '#3fb950', 'rgba(63,185,80,.10)');
+  if (wait.length >= 2) line(c, wait, pad, w, h, maxY, '#f85149', null);
+  legend(c, w, pad, [['in flight', '#3fb950'], ['queued', '#f85149']]);
+}
+
+function drawCache(d) {
+  const cv = document.getElementById('chartCache');
+  const { c, w, h } = prep(cv);
+  const pad = { l: 58, r: 10, t: 10, b: 18 };
+  const pts = series(d, 'cache_hit_rate').map(p => ({ ts: p.ts, v: p.v * 100 }));
+  axes(c, w, h, 100, pad, v => fmt(v) + '%');
+
+  const life = (d.capacity || {}).lifetime_hit_rate;
+  const y = v => pad.t + (h - pad.t - pad.b) * (1 - v / 100);
+  if (life !== null && life !== undefined) {
+    c.strokeStyle = '#d29922'; c.setLineDash([5, 4]); c.beginPath();
+    c.moveTo(pad.l, y(life * 100)); c.lineTo(w - pad.r, y(life * 100)); c.stroke();
+    c.setLineDash([]);
+    c.fillStyle = '#d29922'; c.textAlign = 'left'; c.textBaseline = 'bottom';
+    c.font = '11px ui-sans-serif';
+    c.fillText('lifetime ' + fmt(life * 100, 1) + '%', pad.l + 4, y(life * 100) - 3);
+  }
+  if (pts.length < 2) { idle(c, w, h); return; }
+  line(c, pts, pad, w, h, 100, '#3fb950', 'rgba(63,185,80,.12)');
+}
+
+let inflight = false;
+
+async function tick() {
+  // A backgrounded tab does not need 2s updates, and on a phone that poll is
+  // the difference between an idle page and a warm battery.
+  if (document.hidden || inflight) return;
+  inflight = true;
+  try {
+    const r = await fetch('/api/state', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    render(await r.json());
+  } catch (e) {
+    setState({ state: 'monitor_error',
+               detail: 'dashboard cannot reach its own API: ' + e.message }, {});
+  } finally {
+    inflight = false;
+  }
+}
+tick();
+setInterval(tick, 2000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+
+// Canvases are sized from clientWidth, so they must be redrawn on resize and
+// on orientation change; debounced because both fire in bursts.
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (last) { drawTokens(last); drawQueue(last); drawCache(last); }
+  }, 120);
+});
+</script>
+</body>
+</html>
