@@ -1,34 +1,24 @@
 #!/usr/bin/env bash
-# Encrypted backup and restore of the credentials that deploy.sh CANNOT
-# regenerate correctly.
-#
-# The problem this solves: /scratch is ephemeral and a reclaimed spot droplet
-# takes the whole box with it. deploy.sh rebuilds everything except identity -
-# on a fresh box its `secrets` stage seeds customers.tsv from the example, so
-# every live customer key is gone and all of them get 401 with no way to tell
-# them what changed. Minting replacements is not equivalent: the key IS the
-# customer's integration.
+# Encrypted backup and restore of the credentials deploy.sh cannot regenerate.
+# A minted key is not the one the customer holds, so identity has to survive a
+# reclaim rather than be recreated.
 #
 #   ./secrets-backup.sh backup [outfile]   encrypt the live secrets
 #   ./secrets-backup.sh verify <file>      list contents without writing
 #   ./secrets-backup.sh restore <file>     decrypt into place, correct modes
 #
-# The passphrase is prompted, or taken from $SECRETS_PASSPHRASE. Store it in a
-# password manager - it is the only thing standing between this file and every
-# customer credential, and losing it is equivalent to losing the backup.
+# Passphrase is prompted, or taken from $SECRETS_PASSPHRASE. Losing it is
+# equivalent to losing the backup.
 set -euo pipefail
 
 cd "$(dirname "$(readlink -f "$0")")"
 REPO="$PWD"
 
-# Files worth carrying across a rebuild. vllm-k3.env is included because its
-# VLLM_API_KEY must equal api-key.txt; restoring one without the other gives a
-# silent 401 on every request after it passes nginx.
+# vllm-k3.env belongs here because its VLLM_API_KEY must equal api-key.txt;
+# restoring one without the other 401s every request past nginx.
 FILES=(api-key.txt dash-password.txt customers.tsv vllm-k3.env)
 
-# 600k iterations is deliberate: this file is expected to sit in durable
-# storage, possibly a git remote, so it must resist offline cracking rather
-# than merely being "encrypted".
+# High iteration count: this bundle is expected to sit in a git remote.
 ENC_ARGS=(-aes-256-cbc -pbkdf2 -iter 600000 -salt)
 
 die()  { echo "secrets-backup: $*" >&2; exit 1; }

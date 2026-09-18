@@ -135,11 +135,8 @@ fi
 # implying full coverage.
 [ "$n" -gt 0 ] || note "no live secret files on this box to compare against"
 
-# The secrets bundle is the one credential file we deliberately DO commit, so
-# it needs its own check: prove it is actually ciphertext. A bundle written
-# without encryption, or a tarball someone dropped in by hand, would sail past
-# every pattern above (tar headers contain no key material at the offsets the
-# patterns look at) while publishing every customer key in the clear.
+# The one credential file we deliberately commit, so prove it is ciphertext:
+# a plain tarball would pass every pattern above with the keys in the clear.
 echo
 echo "== committed secrets bundle =="
 bundles=$(git ls-files -- '*.enc' 2>/dev/null || true)

@@ -1,17 +1,10 @@
-# Retention for the per-customer usage log - the billing and attribution
-# record. Installed by deploy.sh to /etc/logrotate.d/k3-usage.
+# Retention for the per-customer usage log, the billing record.
+# Installed by deploy.sh to /etc/logrotate.d/k3-usage.
 #
-# Why this log lives in /var/log/k3/ and not /var/log/nginx/:
-# the nginx package ships /etc/logrotate.d/nginx globbing /var/log/nginx/*.log,
-# which swept this file up at `rotate 14` - deleting the billing record after
-# two weeks - and recreated it `0640 www-data adm`, widening it from root-only.
-# logrotate refuses a second entry for a path it already manages ("duplicate
-# log entry"), and it has no exclude syntax, so a drop-in override is not
-# possible. Moving the file out of that glob is the only way to give it its
-# own policy.
-#
-# Keep this path out of /var/log/nginx/ for that reason. If you move it back,
-# these settings are silently overridden by the package's.
+# Do not move this back under /var/log/nginx/: the nginx package globs that
+# directory at `rotate 14`, and logrotate has no exclude syntax, so these
+# settings would be silently overridden and the billing record dropped after
+# two weeks.
 /var/log/k3/*.log {
     daily
     rotate 365
@@ -19,15 +12,13 @@
     delaycompress
     missingok
     notifempty
-    # Tighter than the nginx package's 0640 www-data adm: the worker never
-    # reads this file, only writes it via a descriptor nginx's master opens as
-    # root, so www-data needs no access at all.
+    # root-only: the worker writes via a descriptor the master opens, so
+    # www-data needs no access.
     create 0640 root adm
     su root adm
     sharedscripts
     postrotate
-        # nginx holds the old descriptor open after the rename and would keep
-        # writing to the rotated file until told to reopen.
+        # nginx keeps writing to the renamed file until told to reopen.
         invoke-rc.d nginx rotate >/dev/null 2>&1 || true
     endscript
 }
