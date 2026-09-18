@@ -172,9 +172,10 @@ stages (in dependency order; "all" runs exactly this list):
               $MODEL_DIR exists
   secrets     api-key.txt, dash-password.txt, vllm-k3.env (from the .example,
               VLLM_API_KEY := api-key.txt), $HTPASSWD.
-              On a REBUILD set SECRETS_BUNDLE=<file> to restore a
-              secrets-backup.sh archive instead of minting new keys, or every
-              existing customer key stops working.
+              On a REBUILD it restores k3-secrets.enc from the repo instead of
+              minting new keys, prompting for the passphrase; override the path
+              with SECRETS_BUNDLE=<file> sudo -E. Minting new keys would stop
+              every existing customer key from working.
   install     config.yaml -> $HF_DIR/config.yaml, dashboard -> $DASH_DIR,
               units -> /etc/systemd/system, nginx fragments -> $NGINX_DIR,
               tests -> $TEST_DIR

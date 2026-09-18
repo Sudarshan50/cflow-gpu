@@ -261,7 +261,7 @@ The ignore rules are in `.gitignore`. Handling, rotation and blast radius:
   Everything after creation is automated. `make sizes` (`Makefile:18-20`) probes
   whether an MI355X slug is visible to `doctl` on this account.
 - **Pointing DNS at the box.** `issue-cert.sh` refuses to call certbot until a
-  public resolver returns `EXPECT_IP=201.79.29.187` for `cflox.store`
+  public resolver returns this host's own public IP for `cflox.store`
   (`issue-cert.sh:13`, `issue-cert.sh:20-34`), because a failed HTTP-01 burns
   Let's Encrypt rate limit at 5 failures per hostname per hour
   (`issue-cert.sh:4-5`). Create the A record yourself; `./issue-cert.sh --watch`
