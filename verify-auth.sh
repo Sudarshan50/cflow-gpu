@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Proves the public edge on :8000 is authenticated and path-restricted.
+# Proves the public TLS edge (443) is authenticated and path-restricted.
 #
 # Why this exists: vLLM's --api-key only guards ("/v1","/v2","/inference")
 # (entrypoints/serve/utils/server_utils.py:42). On this build POST /invocations

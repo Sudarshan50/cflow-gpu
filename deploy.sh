@@ -64,6 +64,9 @@ NGINX_DIR="${NGINX_DIR:-/etc/nginx/conf.d}"
 HTPASSWD="${HTPASSWD:-/etc/nginx/k3-dash.htpasswd}"   # nginx/k3-dash.inc:5
 DASH_USER="${DASH_USER:-admin}"                       # the user in the live htpasswd
 CERT_LIVE="${CERT_LIVE:-/etc/letsencrypt/live/$DOMAIN}"
+# Scripts here run only after a successful renewal. Empty on the live box until
+# the install stage populates it; see nginx/certbot-deploy-hook.sh.
+RENEWAL_HOOK_DIR="${RENEWAL_HOOK_DIR:-/etc/letsencrypt/renewal-hooks/deploy}"
 
 # 900s mirrors TimeoutStartSec in k3.service:24, which is itself sized for the
 # ~6 min load (140s weights + 74s engine init + overhead, docs §4.3).
@@ -574,6 +577,13 @@ stage_install() {
       *)       sync_file "$f" "$NGINX_DIR/$base" 644 || ngx_changed=1 ;;
     esac
   done
+
+  # Reload nginx after certbot renews, or renewal succeeds silently while nginx
+  # keeps serving the certificate it parsed at its last reload - and clients get
+  # TLS errors on expiry day despite a valid cert being on disk. issue-cert.sh
+  # uses `certonly --webroot`, so the renewal config has no installer to do this.
+  run mkdir -p "$RENEWAL_HOOK_DIR"
+  sync_file "$REPO/nginx/certbot-deploy-hook.sh" "$RENEWAL_HOOK_DIR/reload-nginx.sh" 755 || true
 
   if [ "$DRY_RUN" = 0 ] && [ "$ngx_changed" = 1 ]; then
     if nginx_ok; then
