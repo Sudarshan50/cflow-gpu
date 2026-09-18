@@ -8,9 +8,16 @@
 #   ./issue-cert.sh --watch  poll DNS every 60s, issue as soon as it resolves
 set -uo pipefail
 
-DOMAIN=cflox.store
+DOMAIN="${DOMAIN:-cflox.store}"
 WWW_OK=1
-EXPECT_IP=201.79.29.187
+# A reclaimed spot droplet comes back with a DIFFERENT public IP. Hardcoding
+# this made dns_ready() permanently false on any rebuilt box, so the cert would
+# never issue and the failure looked like a DNS problem rather than a stale
+# constant. Detect our own address; override with EXPECT_IP=... to pin it.
+EXPECT_IP="${EXPECT_IP:-$(curl -s --max-time 10 https://api.ipify.org 2>/dev/null)}"
+case "$EXPECT_IP" in
+  *[!0-9.]*|'') echo "FATAL: could not determine this host's public IP; set EXPECT_IP=<addr>" >&2; exit 1;;
+esac
 EMAIL="admin@${DOMAIN}"
 TLSCONF=/etc/nginx/conf.d/k3-tls.conf
 KEYFILE=/scratch/deploy/api-key.txt

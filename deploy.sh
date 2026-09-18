@@ -170,7 +170,10 @@ stages (in dependency order; "all" runs exactly this list):
   weights     hf download $MODEL into $HF_DIR; skipped if
               $MODEL_DIR exists
   secrets     api-key.txt, dash-password.txt, vllm-k3.env (from the .example,
-              VLLM_API_KEY := api-key.txt), $HTPASSWD
+              VLLM_API_KEY := api-key.txt), $HTPASSWD.
+              On a REBUILD set SECRETS_BUNDLE=<file> to restore a
+              secrets-backup.sh archive instead of minting new keys, or every
+              existing customer key stops working.
   install     config.yaml -> $HF_DIR/config.yaml, dashboard -> $DASH_DIR,
               units -> /etc/systemd/system, nginx fragments -> $NGINX_DIR,
               tests -> $TEST_DIR
@@ -407,6 +410,27 @@ stage_secrets() {
 
   local keyfile="$REPO/api-key.txt" pwfile="$REPO/dash-password.txt"
   local envfile="$REPO/vllm-k3.env" envex="$REPO/vllm-k3.env.example"
+
+  # Rebuilding after a reclaim: prefer RESTORING identity over minting it.
+  # Generated keys are not equivalent - a customer's key IS their integration,
+  # so a fresh customers.tsv 401s everyone with no way to tell them what
+  # changed. Point SECRETS_BUNDLE at a secrets-backup.sh archive, or drop one
+  # at the default path, and this stage restores instead of generating.
+  if [ ! -s "$keyfile" ] && [ -s "${SECRETS_BUNDLE:-}" ]; then
+    if [ "$DRY_RUN" = 1 ]; then
+      printf '        + restore secrets from %s\n' "$SECRETS_BUNDLE"
+    else
+      log "  restoring secrets from $SECRETS_BUNDLE"
+      "$REPO/secrets-backup.sh" restore "$SECRETS_BUNDLE" ||
+        die "restore failed; refusing to mint replacement keys that would 401 every customer"
+    fi
+  elif [ ! -s "$keyfile" ] && [ -s "$REPO/customers.tsv" ]; then
+    : # customers.tsv survived; nothing to restore
+  elif [ ! -s "$keyfile" ]; then
+    warn "no api-key.txt and no SECRETS_BUNDLE: generating FRESH credentials."
+    warn "  every existing customer key becomes invalid. If this is a rebuild,"
+    warn "  stop now and restore instead: ./secrets-backup.sh restore <file>"
+  fi
 
   if [ -s "$keyfile" ]; then
     log "  reusing existing api-key.txt"
