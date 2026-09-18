@@ -23,7 +23,7 @@ Environment=DASH_ADDR=127.0.0.1
 Environment=DASH_PORT=8080
 Environment=VLLM_BASE_URL=http://127.0.0.1:8001
 Environment=PUBLIC_URL=https://cflox.store/v1
-Environment=ACCESS_LOG=/var/log/nginx/k3-usage.log
+Environment=ACCESS_LOG=/var/log/k3/usage.log
 Environment=CERT_PATH=/etc/letsencrypt/live/cflox.store/fullchain.pem
 Environment=API_KEY_FILE=/scratch/deploy/api-key.txt
 

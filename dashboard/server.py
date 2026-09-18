@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 VLLM_BASE = os.environ.get("VLLM_BASE_URL", "http://127.0.0.1:8001")
 METRICS_URL = VLLM_BASE.rstrip("/") + "/metrics"
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "https://cflox.store/v1")
-ACCESS_LOG = os.environ.get("ACCESS_LOG", "/var/log/nginx/k3-usage.log")
+ACCESS_LOG = os.environ.get("ACCESS_LOG", "/var/log/k3/usage.log")
 CERT_PATH = os.environ.get("CERT_PATH", "/etc/letsencrypt/live/cflox.store/fullchain.pem")
 # Used only to read /v1/models for the served name and context limit. Optional:
 # everything else works without it.

@@ -128,7 +128,7 @@ cd /scratch/deploy
 ```
 
 Make-before-break, if the customer cannot take a gap: mint `<name>-2`, deliver
-it, watch their traffic move in `/var/log/nginx/k3-usage.log`, then revoke
+it, watch their traffic move in `/var/log/k3/usage.log`, then revoke
 `<name>`. Details and caveats in [`RUNBOOK.md` §4.5](RUNBOOK.md).
 
 - No vLLM restart. Ever. This is the entire point of the two-tier model
@@ -337,7 +337,7 @@ spent.
 2. **Assess use.** Grep the usage log for that identity and look for requests
    you cannot account for (unfamiliar `ip=`, off-hours volume, unusual paths):
    ```bash
-   grep "cust=<name> " /var/log/nginx/k3-usage.log | tail -200
+   grep "cust=<name> " /var/log/k3/usage.log | tail -200
    ```
 3. **Re-issue** under a new name (`./gen-keys.sh add <name>-2`) and deliver it
    over a channel that is not the one that leaked.
@@ -352,7 +352,7 @@ compromised — in which case go to §6.4.
 
 1. Rotate per §4.2, scheduling the ~6-minute restart.
 2. Check for direct-to-engine use that bypassed the edge: requests served by
-   vLLM but absent from `/var/log/nginx/k3-usage.log` (which is written only
+   vLLM but absent from `/var/log/k3/usage.log` (which is written only
    from the `/v1/` location, `issue-cert.sh:79`) came from on the box.
 
 ### 6.3 The repo or a credential was pushed to GitHub
@@ -374,7 +374,7 @@ compromised — in which case go to §6.4.
 1. **Cut off customer traffic** before anything else: `systemctl stop nginx`.
    The engine keeps running on loopback, which is fine — nothing off-box can
    reach it.
-2. **Preserve evidence**: copy `/var/log/nginx/k3-usage.log`,
+2. **Preserve evidence**: copy `/var/log/k3/usage.log`,
    `/var/log/nginx/error.log`, `journalctl -u k3.service`, and
    `docker logs k3` off the box. Note that `docker logs` is destroyed on the
    next engine restart (`k3.service:29`, `RUNBOOK.md` §7.1).

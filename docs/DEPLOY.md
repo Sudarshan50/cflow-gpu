@@ -588,7 +588,7 @@ as down when k3 is crash-looping (`systemd/k3dash.service:6-8`).
 
 ### 6.4 Usage log
 
-`/var/log/nginx/k3-usage.log`, format `k3usage`, defined at `gen-keys.sh:91-93`:
+`/var/log/k3/usage.log`, format `k3usage`, defined at `gen-keys.sh:91-93`:
 
 ```
 $time_iso8601 cust=$k3_customer status=$status path=$request_uri
@@ -667,7 +667,7 @@ Then destroy the droplet in the Control Panel. `/scratch` — weights, image
 tarball, results, and every secret file — is destroyed with it
 (`cloud-init.yaml:25`). Nothing else needs cleaning up, which is the point of
 keeping all state on the ephemeral volume. Before destroying, extract anything
-you need to keep: `/var/log/nginx/k3-usage.log` (billing record) and
+you need to keep: `/var/log/k3/usage.log` (billing record) and
 `customers.tsv` (so existing customer keys survive the rebuild — otherwise every
 customer must be re-issued).
 

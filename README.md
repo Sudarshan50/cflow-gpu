@@ -143,7 +143,7 @@ Not in git, created on the box (see [Secrets](#secrets)): `api-key.txt`,
 Both upstreams are defined in `nginx/k3.conf`. `/metrics` and `/health` are
 `allow 127.0.0.1; deny all` (`issue-cert.sh:72-73`) so the dashboard can scrape
 them and nobody else can. Every request through `/v1/` is attributed in
-`/var/log/nginx/k3-usage.log` using the `k3usage` log format defined at
+`/var/log/k3/usage.log` using the `k3usage` log format defined at
 `gen-keys.sh:91-93`.
 
 Detailed version: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
@@ -169,7 +169,7 @@ Run from `/scratch/deploy` as root. `make` with no target prints the target list
 | Live prefix-cache hit rate (expect ~81%) | `make cache` | `Makefile:13-15` |
 | Follow engine logs | `make logs` | `Makefile:16-17` |
 | Prove the edge is still locked down | `./deploy.sh verify` (see caveat below) | `deploy.sh`, `verify-auth.sh` |
-| Follow per-customer usage | `tail -f /var/log/nginx/k3-usage.log` | `systemd/k3dash.service:26` |
+| Follow per-customer usage | `tail -f /var/log/k3/usage.log` | `systemd/k3dash.service:26` |
 | Issue or renew TLS | `./issue-cert.sh` (or `--watch`) | `issue-cert.sh:8` |
 | Verify/restore the pinned image | `./launch.sh` | `launch.sh:17-37` |
 

@@ -330,7 +330,7 @@ endpoint, aggregate the usage log (§7.2):
 
 ```bash
 awk '{for(i=1;i<=NF;i++) if($i ~ /^cust=/) print substr($i,6)}' \
-  /var/log/nginx/k3-usage.log | sort | uniq -c | sort -rn
+  /var/log/k3/usage.log | sort | uniq -c | sort -rn
 ```
 
 ### 4.5 Rotate a customer key
@@ -488,7 +488,7 @@ anything; afterwards, `journalctl -u k3.service` is all that is left.
 
 ### 7.2 Per-customer usage — the billing record
 
-`/var/log/nginx/k3-usage.log`, format `k3usage`, defined at
+`/var/log/k3/usage.log`, format `k3usage`, defined at
 `gen-keys.sh:91-93` and written only from the `/v1/` location
 (`issue-cert.sh:79`), so it is a clean attribution record with no dashboard or
 health-probe noise in it.
@@ -513,26 +513,35 @@ per-customer view and 401/429/5xx alerts come from it; if it is unreadable the
 dashboard raises "attribution is unavailable" (`dashboard/server.py:850-852`).
 
 ```bash
-tail -f /var/log/nginx/k3-usage.log
+tail -f /var/log/k3/usage.log
 # slowest upstream times, last 1000 requests
-tail -1000 /var/log/nginx/k3-usage.log | awk '{for(i=1;i<=NF;i++) if($i~/^up_ms=/) print $i, $0}' | sort -rn -t= -k2 | head
+tail -1000 /var/log/k3/usage.log | awk '{for(i=1;i<=NF;i++) if($i~/^up_ms=/) print $i, $0}' | sort -rn -t= -k2 | head
 ```
 
-**Retention gap — flag for a decision.** The repo ships no logrotate rule for
-this file, and the packaged `/etc/logrotate.d/nginx` rule globs
-`/var/log/nginx/*.log`, so it *is* rotated, with consequences nobody chose
-deliberately:
+**Retention — resolved 2026-09-18.** This log previously sat at
+`/var/log/k3/usage.log`, where the nginx package's
+`/etc/logrotate.d/nginx` glob claimed it with consequences nobody chose: `rotate
+14 daily` **deleted the billing record after 14 days**, and `create 0640
+www-data adm` widened it from `600 root:root` on every rotation.
 
-- `rotate 14` with `daily` means the billing record is **deleted after 14
-  days**. Nothing ships it anywhere else (`ARCHITECTURE.md` §9).
-- The live file is `600 root:root`, but the rule's `create 0640 www-data adm`
-  means every rotation widens it to group `adm`. Customer identities, paths and
-  IPs — no keys — become readable by that group.
+A drop-in override is not possible — logrotate rejects a second entry for a path
+it already manages (`duplicate log entry`) and has no exclude syntax — so the
+log was moved out of that glob to `/var/log/k3/usage.log` and given its own
+policy in `nginx/k3-usage.logrotate` (installed to `/etc/logrotate.d/k3-usage`):
+`rotate 365 daily`, compressed, `create 0640 root adm`. The worker never reads
+this file, only writes it through a descriptor the master opens as root, so
+`www-data` needs no access.
 
-`TODO(operator):` decide the retention requirement for per-customer usage and
-either add a dedicated rule for `k3-usage.log` with the retention and mode you
-want, or accept 14 days and `0640 www-data adm` explicitly. Do not assume the
-current behaviour was designed.
+The 1,878 pre-migration entries were preserved as
+`/var/log/k3/usage.log.pre-migration-20260918` and fall under the new retention.
+Three places reference this path and must stay in agreement: the `access_log`
+directive (`issue-cert.sh:79`, regenerated into `k3-tls.conf`), the dashboard's
+`ACCESS_LOG` (`systemd/k3dash.service:26`), and the logrotate rule. Changing one
+alone silently splits or strands the billing record.
+
+`TODO(operator):` nothing ships these logs off-box, so a year of billing data
+lives only on an **ephemeral** disk (`ARCHITECTURE.md` §9). Decide whether that
+is acceptable or whether rotated files should be shipped to durable storage.
 
 ### 7.3 Edge and dashboard
 
@@ -709,8 +718,8 @@ several of these have symptoms that look identical from the client side.
 1. **Confirm.** Their name in the map, and their recent log lines:
    ```bash
    grep -c "\"${NAME}\";" /etc/nginx/conf.d/00-k3-keys.conf     # 1 = present
-   grep "cust=${NAME} " /var/log/nginx/k3-usage.log | tail
-   grep 'cust= ' /var/log/nginx/k3-usage.log | tail            # rejected-at-edge lines
+   grep "cust=${NAME} " /var/log/k3/usage.log | tail
+   grep 'cust= ' /var/log/k3/usage.log | tail            # rejected-at-edge lines
    ```
 2. **Likely causes.** They were revoked; they are sending an old key after a
    rotation; their client mangles the header (a stray `Bearer Bearer`, trailing
@@ -729,7 +738,7 @@ several of these have symptoms that look identical from the client side.
 1. **Confirm who and how much.**
    ```bash
    awk '$0 ~ /status=429/ {for(i=1;i<=NF;i++) if($i~/^cust=/) print $i}' \
-     /var/log/nginx/k3-usage.log | sort | uniq -c | sort -rn
+     /var/log/k3/usage.log | sort | uniq -c | sort -rn
    tail -f /var/log/nginx/error.log      # limiting requests / limiting connections
    ```
    The error log distinguishes `limit_req` (rate) from `limit_conn`
@@ -884,7 +893,7 @@ Non-urgent: the dashboard is a monitor. Serving is unaffected.
 the repo, and every secret file go with it (`ARCHITECTURE.md` §9).
 
 1. **Before you rebuild**, if the old box is still reachable, extract
-   `customers.tsv` and `/var/log/nginx/k3-usage.log` (`DEPLOY.md` §7.5).
+   `customers.tsv` and `/var/log/k3/usage.log` (`DEPLOY.md` §7.5).
    Carrying `customers.tsv` over is what keeps existing customer keys working;
    without it every customer must be re-issued.
 2. **Rebuild** with [`DEPLOY.md`](DEPLOY.md) — that document owns this

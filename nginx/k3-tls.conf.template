@@ -95,7 +95,10 @@ server {
         if ($k3_customer = "") { return 401 '{"error":{"message":"invalid or missing api key","type":"authentication_error"}}'; }
         default_type application/json;
         include /etc/nginx/conf.d/k3-limits.inc;
-        access_log /var/log/nginx/k3-usage.log k3usage;
+        # NOT under /var/log/nginx/: the nginx package's logrotate glob would
+        # take this file at rotate 14 and delete the billing record after two
+        # weeks. See nginx/k3-usage.logrotate.
+        access_log /var/log/k3/usage.log k3usage;
 
         proxy_pass http://k3_backend;
         proxy_http_version 1.1;

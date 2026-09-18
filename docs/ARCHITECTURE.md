@@ -99,7 +99,7 @@ Steps in prose, with sources:
    (`issue-cert.sh:78`, `gen-keys.sh:97-103`). Both limit statuses are
    overridden to 429, and `error_page 429 = @throttled` returns a JSON body with
    `Retry-After: 2` (`issue-cert.sh:93-99`).
-6. **Attribution.** `access_log /var/log/nginx/k3-usage.log k3usage`
+6. **Attribution.** `access_log /var/log/k3/usage.log k3usage`
    (`issue-cert.sh:79`). This log is the only place per-customer identity
    exists; the dashboard reads it (§2.2).
 7. **Credential swap** — see §3. This is the last thing that happens before
@@ -134,7 +134,7 @@ Upstream keepalive is 32 connections with `proxy_http_version 1.1` and
   /opt/k3dash/server.py  (no authentication of its own)
         |
         +--> GET http://127.0.0.1:8001/metrics   every 2.0s   (engine state)
-        +--> tail /var/log/nginx/k3-usage.log    (per-customer attribution)
+        +--> tail /var/log/k3/usage.log    (per-customer attribution)
         +--> rocm-smi --showuse / --showmemuse   every 5.0s   (per-card)
         +--> openssl x509 on the live cert       every 60s    (expiry)
 ```
@@ -481,7 +481,7 @@ that is lost when the droplet is reclaimed. The repo itself lives on it, at
 | `/scratch/hf/config.yaml` — what the container actually reads as `/hf/config.yaml` | `/etc/letsencrypt/live/<domain>/` — cert and key |
 | `/scratch/results` — benchmark output (`k3.service:34`) | `/opt/k3dash/` — `server.py`, `index.html` |
 | `/scratch/deploy` — this repo, including the live secret files | `/etc/systemd/system/k3.service`, `k3dash.service` |
-| `/var/log/nginx/k3-usage.log` is outside `/scratch` but is still machine-local state | `/etc/nginx/k3-dash.htpasswd` |
+| `/var/log/k3/usage.log` is outside `/scratch` but is still machine-local state | `/etc/nginx/k3-dash.htpasswd` |
 
 **This repo is the durable copy; the box is disposable.** Everything in the
 right-hand column is either committed here or regenerable from something here:
@@ -512,7 +512,7 @@ Two gaps worth naming:
   repo's `config.yaml`. Their contents are currently identical (`diff`), but
   editing the repo copy alone does **not** change what the engine loads on next
   restart. Copy it across deliberately.
-- **Local-only state that nothing regenerates:** `/var/log/nginx/k3-usage.log`
+- **Local-only state that nothing regenerates:** `/var/log/k3/usage.log`
   is the sole record of per-customer usage and is not shipped anywhere.
   `TODO(operator):` confirm whether usage attribution needs to survive droplet
   reclaim, and if so, where it is archived.

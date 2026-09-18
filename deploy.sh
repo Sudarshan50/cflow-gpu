@@ -67,6 +67,9 @@ CERT_LIVE="${CERT_LIVE:-/etc/letsencrypt/live/$DOMAIN}"
 # Scripts here run only after a successful renewal. Empty on the live box until
 # the install stage populates it; see nginx/certbot-deploy-hook.sh.
 RENEWAL_HOOK_DIR="${RENEWAL_HOOK_DIR:-/etc/letsencrypt/renewal-hooks/deploy}"
+# Deliberately not /var/log/nginx - see nginx/k3-usage.logrotate.
+USAGE_LOG_DIR="${USAGE_LOG_DIR:-/var/log/k3}"
+USAGE_LOG="${USAGE_LOG:-$USAGE_LOG_DIR/usage.log}"
 
 # 900s mirrors TimeoutStartSec in k3.service:24, which is itself sized for the
 # ~6 min load (140s weights + 74s engine init + overhead, docs §4.3).
@@ -585,6 +588,15 @@ stage_install() {
   run mkdir -p "$RENEWAL_HOOK_DIR"
   sync_file "$REPO/nginx/certbot-deploy-hook.sh" "$RENEWAL_HOOK_DIR/reload-nginx.sh" 755 || true
 
+  # The usage log is the billing record, so it gets its own directory and its
+  # own retention. Under /var/log/nginx/ the package's logrotate glob claimed it
+  # at rotate 14 and there is no way to override a path logrotate already
+  # manages (nginx/k3-usage.logrotate explains this at length).
+  run mkdir -p "$USAGE_LOG_DIR"
+  run chown root:adm "$USAGE_LOG_DIR"
+  run chmod 750 "$USAGE_LOG_DIR"
+  sync_file "$REPO/nginx/k3-usage.logrotate" /etc/logrotate.d/k3-usage 644 || true
+
   if [ "$DRY_RUN" = 0 ] && [ "$ngx_changed" = 1 ]; then
     if nginx_ok; then
       for base in "${backups[@]+"${backups[@]}"}"; do rm -f "$NGINX_DIR/$base.pre-deploy.bak"; done
@@ -807,7 +819,7 @@ summary() {
   printf '                    no vLLM restart needed. revoke with: ./gen-keys.sh revoke <name>\n'
   printf '  logs              docker logs -f k3                 engine\n'
   printf '                    journalctl -fu k3dash.service     dashboard\n'
-  printf '                    /var/log/nginx/k3-usage.log       per-customer access (cust=<name>)\n'
+  printf '                    %-33s per-customer access (cust=<name>)\n' "$USAGE_LOG"
   printf '                    /var/log/nginx/error.log          edge errors\n'
   printf '  health            %-33s correctness gate\n' "$TEST_DIR/gate.sh"
   printf '                    %-33s endpoint + KV cache\n' "make health"
