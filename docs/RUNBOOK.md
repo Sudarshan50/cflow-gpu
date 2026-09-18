@@ -539,9 +539,11 @@ directive (`issue-cert.sh:79`, regenerated into `k3-tls.conf`), the dashboard's
 `ACCESS_LOG` (`systemd/k3dash.service:26`), and the logrotate rule. Changing one
 alone silently splits or strands the billing record.
 
-`TODO(operator):` nothing ships these logs off-box, so a year of billing data
-lives only on an **ephemeral** disk (`ARCHITECTURE.md` §9). Decide whether that
-is acceptable or whether rotated files should be shipped to durable storage.
+`TODO(operator):` nothing ships these logs off-box. A snapshot preserves them
+up to the moment it was taken, but a reclaim loses everything logged since, and
+nothing in the repo carries them. Export `/var/log/k3/usage.log*` before
+destroying a droplet, and decide whether rotated files should be shipped to
+durable storage automatically.
 
 ### 7.3 Edge and dashboard
 
@@ -899,9 +901,12 @@ Non-urgent: the dashboard is a monitor. Serving is unaffected.
 
 ### 9.11 Box reclaimed — full rebuild
 
-`/scratch` is ephemeral and is destroyed on reclaim: weights, image tarball,
-the repo, and every secret file go with it (`ARCHITECTURE.md` §9).
+A reclaim destroys the droplet and everything on its boot disk: weights, image,
+the repo, the certificate and every secret file (`ARCHITECTURE.md` §9).
 
+0. **If you have a snapshot, use it** — [`SNAPSHOT.md`](SNAPSHOT.md). Create a
+   droplet from it, point DNS at the new IP, and it serves in ~5 minutes with
+   no downloads and no credentials. The steps below are the from-nothing path.
 1. **Before you rebuild**, if the old box is still reachable, extract
    `customers.tsv` and `/var/log/k3/usage.log` (`DEPLOY.md` §7.5).
    Carrying `customers.tsv` over is what keeps existing customer keys working;

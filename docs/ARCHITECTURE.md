@@ -471,19 +471,25 @@ wrong output at full speed** — never change one without the other, and run
 
 ## 9. State and persistence
 
-`/scratch` is an **ephemeral 40 TB disk** (`/dev/vdc1`, `K3-DEPLOYMENT.md` §3)
-that is lost when the droplet is reclaimed. The repo itself lives on it, at
-`/scratch/deploy`.
+Since 2026-09-18 `/scratch` is a directory on the **boot disk** (`/dev/vda1`,
+2 TB), not the separate 40 TB volume. Everything below therefore sits on one
+device, which is what makes a droplet snapshot self-contained: restoring one
+brings the weights, the image, the secrets and the certificate with it. The
+40 TB volume is attached at `/mnt/bulk` and nothing depends on it.
 
-| Lives on `/scratch` (ephemeral) | Lives outside `/scratch` (survives reboot, not reclaim) |
+The distinction that still matters is **committed in this repo** versus
+**machine-local**, since a droplet can be reclaimed at any time.
+
+| Machine-local state (in a snapshot, not in git) | Also machine-local, outside `/scratch` |
 |---|---|
 | `/scratch/hf/hub/models--moonshotai--Kimi-K3` — weights, 96 safetensors, 1.5 TB (`K3-DEPLOYMENT.md` §3) | `/etc/nginx/` — `nginx.conf` and `conf.d/` fragments |
 | `/scratch/hf/config.yaml` — what the container actually reads as `/hf/config.yaml` | `/etc/letsencrypt/live/<domain>/` — cert and key |
 | `/scratch/results` — benchmark output (`k3.service:34`) | `/opt/k3dash/` — `server.py`, `index.html` |
 | `/scratch/deploy` — this repo, including the live secret files | `/etc/systemd/system/k3.service`, `k3dash.service` |
-| `/var/log/k3/usage.log` is outside `/scratch` but is still machine-local state | `/etc/nginx/k3-dash.htpasswd` |
+| `/var/log/k3/usage.log` — the per-customer billing record, which exists nowhere else | `/etc/nginx/k3-dash.htpasswd` |
 
-**This repo is the durable copy; the box is disposable.** Everything in the
+**This repo is the durable copy; the box is disposable.** A snapshot makes
+recovery fast, but the repo is what makes it possible at all. Everything in the
 right-hand column is either committed here or regenerable from something here:
 
 - nginx fragments: `nginx/00-default-deny.conf`, `nginx/k3.conf`,

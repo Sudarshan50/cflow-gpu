@@ -2,9 +2,16 @@
 
 Rebuilding `https://cflox.store/v1` — Kimi-K3 on 8× MI355X — from nothing.
 
-`/scratch` is a non-persistent 40 TB volume that is destroyed when the droplet
-is reclaimed (`cloud-init.yaml:25`). This document assumes you have lost it and
-everything on it, including the 1.5 TB of weights.
+This document is the **from-nothing** path: it assumes you have lost the box and
+everything on it, including the 1.5 TB of weights, and have no usable snapshot.
+
+If you do have a snapshot, use it instead — restoring one takes about five
+minutes and downloads nothing. See [`SNAPSHOT.md`](SNAPSHOT.md). This guide is
+how you build the box that becomes the first snapshot, and the fallback when
+none is usable.
+
+Since 2026-09-18 `/scratch` is a directory on the **boot disk**, not the
+separate 40 TB volume, precisely so a snapshot captures it.
 
 The authoritative engineering reference is
 [`K3-DEPLOYMENT.md`](K3-DEPLOYMENT.md). This guide sequences and explains; it
@@ -35,7 +42,8 @@ From the box this configuration was measured on (`K3-DEPLOYMENT.md` §3
 | GPU | 8× AMD Instinct MI355X VF, `gfx950`, PCI `0x75b3` |
 | VRAM | 287.7 GiB/card, 2,304 GB total |
 | CPU / RAM | 192 vCPU / 2,015 GiB |
-| Scratch | `/dev/vdc1`, 40 TB ext4 on `/scratch` |
+| Boot disk | `/dev/vda1`, 2 TB ext4 on `/`, holds `/scratch` |
+| Bulk volume (optional) | `/dev/vdc1`, 40 TB ext4 at `/mnt/bulk`, nothing depends on it |
 | Kernel / amdgpu / ROCm | `6.8.0-137-generic` / `6.19.14.31400000` / 7.14 |
 
 Tensor parallelism is fixed at 8 (`config.yaml:19`) and expert parallelism is
@@ -48,11 +56,13 @@ together, and re-running the gate.
 | Consumer | Size |
 |---|---|
 | Model weights, 96 safetensors | **1.5 TB** at `/scratch/hf/hub/models--moonshotai--Kimi-K3` (`K3-DEPLOYMENT.md` §3 "Model") |
-| Docker image | 57.2 GB (`K3-DEPLOYMENT.md` §3 "Image") |
+| Docker image | 57.2 GB in `/var/lib/docker` (`K3-DEPLOYMENT.md` §3 "Image") |
 | Optional image tarball | `/scratch/backup/k3-image.tar`, consumed by `launch.sh:13` |
 
-The 40 TB scratch volume covers all of this comfortably; the constraint is
-time, not space.
+All of this is on the 2 TB boot disk, which sits at about 1.6 TB used with
+roughly 400 GB free. That is deliberate — it is what makes a droplet snapshot
+self-contained. It also means the boot disk is the capacity constraint now, so
+watch it before adding anything large.
 
 ### DNS
 
@@ -134,7 +144,7 @@ doctl compute droplet create <name> \
 |---|---|---|
 | packages | `jq`, `zstd`, `python3.12-venv` | `cloud-init.yaml:8` |
 | sysctl | TCP buffers to 256 MiB, `fq_codel`, cubic — tuning for the 1.5 TB pull | `cloud-init.yaml:11-18`, `:50` |
-| scratch | adds `LABEL=DOSCRATCH /scratch ext4` to fstab, mounts it, creates `hf/`, `results/`, `deploy/` | `cloud-init.yaml:26-29` |
+| scratch | creates `/scratch/{hf,results,deploy}` on the boot disk; deliberately does **not** mount a volume there, which would hide the weights | `cloud-init.yaml:25-30` |
 | weights | venv at `/opt/hfv`, `hf download moonshotai/Kimi-K3` with `HF_XET_HIGH_PERFORMANCE=1` | `cloud-init.yaml:36-42` |
 | serve config | installs `config.yaml` to `/scratch/hf/config.yaml` | `cloud-init.yaml:45` |
 | supervision | installs and `enable --now` `k3.service` | `cloud-init.yaml:46-47` |
@@ -287,9 +297,9 @@ The escape hatch when a stage fails. This mirrors `K3-DEPLOYMENT.md` §4 and
 ### 4.1 Host prep
 
 ```bash
-mkfs.ext4 -L DOSCRATCH /dev/vdc1        # DESTRUCTIVE; first setup only
-echo 'LABEL=DOSCRATCH /scratch ext4 discard,errors=remount-ro 0 2' >> /etc/fstab
-mkdir -p /scratch && mount /scratch
+# /scratch is a plain directory on the boot disk. Do NOT mount a volume here:
+# it would hide the weights. Attach the optional 40 TB volume at /mnt/bulk.
+mkdir -p /scratch
 mkdir -p /scratch/hf /scratch/results /scratch/deploy
 
 sysctl -w net.core.rmem_max=268435456
@@ -663,13 +673,23 @@ Stop serving, in this order:
 systemctl disable --now k3.service k3dash.service
 ```
 
-Then destroy the droplet in the Control Panel. `/scratch` — weights, image
-tarball, results, and every secret file — is destroyed with it
-(`cloud-init.yaml:25`). Nothing else needs cleaning up, which is the point of
-keeping all state on the ephemeral volume. Before destroying, extract anything
-you need to keep: `/var/log/k3/usage.log` (billing record) and
-`customers.tsv` (so existing customer keys survive the rebuild — otherwise every
-customer must be re-issued).
+Then destroy the droplet in the Control Panel. Everything goes with it: the
+weights, the image, the certificate and every secret file all live on the boot
+disk.
+
+**Before destroying, in this order:**
+
+1. Take a snapshot (`sudo ./snapshot-prep.sh`, then snapshot from the Control
+   Panel) and **restore it to a new droplet and verify it serves**. An untested
+   snapshot is not a backup.
+2. Export `/var/log/k3/usage.log*` — the per-customer billing record exists
+   nowhere else and is not in the repo.
+3. Confirm `k3-secrets.enc` is current (`./secrets-backup.sh verify
+   k3-secrets.enc`), so existing customer keys survive even if the snapshot
+   turns out to be unusable. Without it every customer must be re-issued.
+
+Keep the `/mnt/bulk` volume until the new box is verified: it still holds a
+full copy of the weights and is the third recovery route.
 
 ---
 

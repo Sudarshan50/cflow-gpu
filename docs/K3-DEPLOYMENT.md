@@ -9,6 +9,13 @@ untuned baseline. 780/780 requests, zero failures.**
 
 Date: 2026-09-18 · Host: 8× AMD Instinct MI355X VF
 
+> **Historical record.** This documents the box as measured on the date above
+> and is left unchanged so the numbers keep their context. One thing has since
+> moved: `/scratch` was the 40 TB `/dev/vdc1` volume then, and is a directory on
+> the 2 TB boot disk now, so that a droplet snapshot carries the weights
+> ([`SNAPSHOT.md`](SNAPSHOT.md)). Storage-setup commands below are superseded by
+> [`DEPLOY.md`](DEPLOY.md); the tuning, benchmarks and findings still stand.
+
 ---
 
 ## 1. Headline numbers
@@ -172,7 +179,8 @@ cudagraph_mode=FULL_DECODE_ONLY   51 capture sizes, largest 512, 0.34 GiB
 ### 4.1 Host prep (one time)
 
 ```bash
-# Scratch disk
+# Scratch disk — SUPERSEDED, see DEPLOY.md §4.1. /scratch is now a directory on
+# the boot disk; mounting a volume here would hide the weights.
 mkfs.ext4 -L DOSCRATCH /dev/vdc1        # destructive; only on first setup
 echo 'LABEL=DOSCRATCH /scratch ext4 discard,errors=remount-ro 0 2' >> /etc/fstab
 mkdir -p /scratch && mount /scratch
