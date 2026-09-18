@@ -597,9 +597,12 @@ Written only from the `/v1/` location (`issue-cert.sh:79`), so it is a clean
 per-customer billing and attribution record. The dashboard tails the same file
 (`systemd/k3dash.service:26`).
 
-`TODO(operator):` there is no logrotate rule for this file in the repo. Confirm
-one exists on the box or add it — it is the billing record and it grows with
-traffic.
+Rotation is handled by `nginx/k3-usage.logrotate`, installed by `deploy.sh` to
+`/etc/logrotate.d/k3-usage`: daily, `rotate 365`, compressed, `0640 root adm`.
+The log lives at `/var/log/k3/usage.log` rather than under `/var/log/nginx/`
+specifically so the nginx package's own rule cannot claim it — that rule globs
+`/var/log/nginx/*.log` at `rotate 14`, which silently truncated the billing
+record to two weeks and widened its permissions.
 
 ### 6.5 What to watch
 

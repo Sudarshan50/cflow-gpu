@@ -578,24 +578,34 @@ of expiry. Renewal uses the `webroot` authenticator against
 block serves at `/.well-known/acme-challenge/` (`issue-cert.sh:48`). No
 downtime, no operator action in the normal case.
 
-**Gap — nginx is not reloaded after renewal.** `/etc/letsencrypt/renewal-hooks/deploy/`
-is empty and the renewal config uses no installer, so certbot writes new files
-into `/etc/letsencrypt/archive/` and repoints the `live/` symlinks while nginx
-keeps serving the certificate it loaded at startup. The endpoint will serve an
-expired certificate until something reloads nginx.
+**Closed 2026-09-18 — nginx is reloaded after renewal.** The renewal config uses
+no installer, so certbot writes new files into `/etc/letsencrypt/archive/` and
+repoints the `live/` symlinks without touching nginx, which would keep serving
+the certificate it loaded at startup until it expired.
 
-`TODO(operator):` add a deploy hook that reloads nginx (a one-line script in
-`/etc/letsencrypt/renewal-hooks/deploy/`), or put a `--deploy-hook` on the
-renewal config. Until then, after any renewal:
+`nginx/certbot-deploy-hook.sh` closes that. `deploy.sh`'s `install` stage puts
+it at `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh`, where certbot
+runs it after a successful renewal and only then. It runs `nginx -t` first and
+refuses to reload a config nginx rejects, and uses `reload` rather than
+`restart` so in-flight completions are not cut off.
+
+Verified with a forced dry run:
 
 ```bash
-nginx -t && systemctl reload nginx
-openssl s_client -connect 127.0.0.1:443 -servername cflox.store </dev/null 2>/dev/null \
-  | openssl x509 -noout -enddate     # what is actually being SERVED
+certbot renew --dry-run --no-random-sleep-on-renew --run-deploy-hooks
+#   Hook 'deploy-hook' ran with output:
+#    certbot-deploy-hook: nginx reloaded for /etc/letsencrypt/live/cflox.store
 ```
 
-Compare that against the `enddate` of the file on disk. A mismatch is the
-symptom of this gap.
+To confirm what is actually being served versus what is on disk:
+
+```bash
+openssl s_client -connect 127.0.0.1:443 -servername cflox.store </dev/null 2>/dev/null \
+  | openssl x509 -noout -enddate
+```
+
+A mismatch against the file on disk means the hook did not run — check that it
+is present and executable.
 
 ### 8.2 Re-issuing
 

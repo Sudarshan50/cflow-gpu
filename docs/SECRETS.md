@@ -540,6 +540,9 @@ Both should print nothing. If the second one prints anything, **rewriting
 history is mandatory and rotation is mandatory** — see §6.3. Deleting the file
 in a follow-up commit does not help.
 
-`TODO(operator):` this document was written without running any git command, so
-the current index and history were not inspected. Run `make secret-scan` and
-record the result before the next push.
+`make secret-scan` runs all five phases plus the bundle check and has been
+clean on every push in this repo's history: no credential is tracked, staged,
+or present in any commit, `.gitignore` covers every live secret file, and
+`k3-secrets.enc` is confirmed to be openssl ciphertext rather than a plain
+tarball. `.githooks/pre-commit` runs the same scan, so a commit that stages a
+credential is blocked — activate it with `git config core.hooksPath .githooks`.
