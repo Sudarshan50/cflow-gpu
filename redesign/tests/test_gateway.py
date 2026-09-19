@@ -131,8 +131,12 @@ class ClassBudgetTest(unittest.TestCase):
         self.assertEqual(self.budget.limit_for(INTERACTIVE), 50)
         self.assertEqual(self.budget.limit_for(LONG_CONTEXT), 25)
 
-    def test_an_off_box_class_gets_no_local_slots(self):
-        self.assertEqual(self.budget.limit_for(SHORT_CHAT), 0)
+    def test_an_unrouted_off_box_class_is_still_bounded_locally(self):
+        self.assertGreater(self.budget.limit_for(SHORT_CHAT), 0)
+
+    def test_a_routed_off_box_class_takes_no_local_slots(self):
+        budget = ClassBudget.from_classes(100, ALL_CLASSES, offbox_configured=True)
+        self.assertEqual(budget.limit_for(SHORT_CHAT), 0)
 
     def test_slots_are_exhausted_then_refused(self):
         for _ in range(25):
@@ -172,8 +176,18 @@ class PolicyTest(unittest.TestCase):
         self.assertFalse(decision.admitted)
         self.assertIn("no room for output", decision.reason)
 
-    def test_short_chat_is_routed_off_box_without_taking_a_slot(self):
+    def test_short_chat_takes_a_local_slot_while_no_off_box_target_exists(self):
+        """Honouring served_off_box with nowhere to route would admit this
+        traffic to the local engine while skipping its concurrency slot."""
         decision = self.policy.decide(_envelope(prompt_tokens=2_000))
+        self.assertTrue(decision.admitted)
+        self.assertEqual(decision.notes, ())
+
+    def test_short_chat_skips_the_local_budget_once_off_box_is_configured(self):
+        policy = build_default(
+            max_model_len=WINDOW, concurrency_ceiling=96, offbox_configured=True
+        )
+        decision = policy.decide(_envelope(prompt_tokens=2_000))
         self.assertTrue(decision.admitted)
         self.assertIn("routed off-box", decision.notes)
 

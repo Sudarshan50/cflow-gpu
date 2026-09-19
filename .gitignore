@@ -56,3 +56,7 @@ venv/
 
 .DS_Store
 *.swp
+
+# Customer key table for the redesign branch's edge (see redesign/deploy).
+# Committed form is redesign/deploy/customers.tsv.example.
+customers.tsv

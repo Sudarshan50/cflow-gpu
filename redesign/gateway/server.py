@@ -221,6 +221,7 @@ def build_service(
     trace_path: str | None,
     model_path: str | None,
     send_priority: bool,
+    offbox_configured: bool = False,
 ) -> GatewayService:
     engine = EngineClient(engine_url)
     sink = JsonlSink(Path(trace_path)) if trace_path else MemorySink()
@@ -228,8 +229,11 @@ def build_service(
     policy = GatewayPolicy(
         classifier=Classifier(),
         clamp=TokenClamp(max_model_len=max_model_len),
-        budget=ClassBudget.from_classes(concurrency_ceiling, ALL_CLASSES),
+        budget=ClassBudget.from_classes(
+            concurrency_ceiling, ALL_CLASSES, offbox_configured=offbox_configured
+        ),
         breaker=CircuitBreaker(engine),
+        offbox_configured=offbox_configured,
     )
     return GatewayService(
         policy=policy,

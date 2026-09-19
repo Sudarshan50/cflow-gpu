@@ -25,6 +25,10 @@ SHEDDABLE_PRIORITIES = (Priority.BATCH, Priority.LONG_CONTEXT)
 
 DEFAULT_RETRY_AFTER_SECONDS = 30
 
+# Budget share given to an off-box class that has nowhere to go yet, so it is
+# bounded rather than unlimited until D1 is configured.
+LOCAL_FALLBACK_SHARE = 0.25
+
 
 class EngineHealthSource(abc.ABC):
     @abc.abstractmethod
@@ -111,8 +115,19 @@ class ClassBudget:
             self._in_flight[traffic_class.name] = current - 1
 
     @classmethod
-    def from_classes(cls, ceiling: int, classes) -> "ClassBudget":
-        return cls(
-            ceiling=ceiling,
-            shares={c.name: c.kv_budget_share for c in classes if not c.served_off_box},
-        )
+    def from_classes(cls, ceiling: int, classes, offbox_configured: bool = False) -> "ClassBudget":
+        """Shares for every class that this engine actually serves.
+
+        A class routed off-box takes no local slot; one merely *marked* for
+        off-box routing, with no target configured, still does. Its share is
+        borrowed from the interactive class it most resembles.
+        """
+        shares = {}
+        for traffic_class in classes:
+            if traffic_class.served_off_box and offbox_configured:
+                continue
+            share = traffic_class.kv_budget_share
+            if traffic_class.served_off_box:
+                share = LOCAL_FALLBACK_SHARE
+            shares[traffic_class.name] = share
+        return cls(ceiling=ceiling, shares=shares)
