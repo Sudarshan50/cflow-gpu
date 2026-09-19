@@ -1,0 +1,87 @@
+{
+  "run": "20260919T145955Z-baseline",
+  "created_utc": "2026-09-19T15:11:12Z",
+  "exit_codes": {
+    "health": 1,
+    "verify_auth": 1,
+    "gate": 0
+  },
+  "health_counts": {
+    "PASS": 29,
+    "WARN": 39,
+    "FAIL": 35,
+    "SKIP": 3
+  },
+  "files": [
+    {
+      "file": "config.yaml",
+      "bytes": 5385,
+      "sha256": "d0220d8ccd9eb530aa16e72368c958e40eadb711a9539d99eb94a9866d637385"
+    },
+    {
+      "file": "engine_startup.log",
+      "bytes": 6619,
+      "sha256": "40841fcfc9f637f8e549ee9519992f99975ddda4cc29fce8731f5626f38289b1"
+    },
+    {
+      "file": "env.json",
+      "bytes": 3661,
+      "sha256": "7871757e1574fcc917a5e4ee74f01e5f43de6b4c3a4575653ce593885f2de94a"
+    },
+    {
+      "file": "env.txt",
+      "bytes": 3367,
+      "sha256": "c8c829e455391ff7695ddd8c35742a485b4461d8f5bf1915c7621579bf8a2f28"
+    },
+    {
+      "file": "gate.log",
+      "bytes": 2270,
+      "sha256": "a556266ccd16603396359b9f7fb50050308a51fc603af75f70b83dd07026bddb"
+    },
+    {
+      "file": "health_results.json",
+      "bytes": 20489,
+      "sha256": "328d29fc463c99c40e239ebcdebce7dff99e0a8cac5b5f48c60deb28f10f0fb4"
+    },
+    {
+      "file": "metrics_snapshot.prom",
+      "bytes": 61156,
+      "sha256": "ca3ec1786f3496baaf6871a0a85485b92653f0b3b5f4ec7f0a25fe038ab40363"
+    },
+    {
+      "file": "prod_stats.json",
+      "bytes": 14104,
+      "sha256": "7dfbea1eb13f3d1e9cad56e016b7f2501c9e2e3196aced2d29cfa2a3ab56ca3f"
+    },
+    {
+      "file": "prod_stats.txt",
+      "bytes": 4655,
+      "sha256": "90b31fd12d2439d2ba7bdd02b09af95d280b11b819371dbc17928d60d4213a33"
+    },
+    {
+      "file": "run_env.log",
+      "bytes": 77,
+      "sha256": "79f4b96e81cb06697aeabf316e9cbbf4c6b142eb0ff10fefa73d46c0e00c4d9a"
+    },
+    {
+      "file": "run_health.log",
+      "bytes": 17696,
+      "sha256": "55f58ecff41190e3ab8b6c5efecea8acfa83725ffbf6502f6ab98bc288a5d1d2"
+    },
+    {
+      "file": "run_prod.log",
+      "bytes": 82,
+      "sha256": "7c68b91fe3d0a39c30502007e14306be412de1ab9f34b1e4f430e3558731d397"
+    },
+    {
+      "file": "verify_auth.log",
+      "bytes": 64,
+      "sha256": "e2e22dcc24c7bf1f5053a823c96eb32e1312195cbe7ef22ee2f5b18625e64d2c"
+    },
+    {
+      "file": "vllm-k3.env.redacted",
+      "bytes": 554,
+      "sha256": "915615c35620505c818f01dc5f59091b99dc8e0a42a125d9c5d7e76433484668"
+    }
+  ]
+}

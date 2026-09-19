@@ -1,0 +1,221 @@
+KVV-style health check
+  endpoint : https://cflox.store/v1
+  model    : FW-Kimi-K3
+  key      : evalbot (redacted)
+  sections : A,B,C,D,E,F,G,H,I,J,K,L,M,N,S
+
+A. Basic protocol
+  [PASS] A1     GET /v1/models returns target model                  http 200 names=['FW-Kimi-K3', 'kimi-k3']
+  [PASS] A2     Non-streaming chat structure                         http 200 finish=stop content='Hello!' 13.4s
+  [PASS] A3     Streaming chat frames + [DONE]                       http 200 frames=189 done=True 
+  [PASS] A4     Response model field echo                            echoed='FW-Kimi-K3' expected='FW-Kimi-K3'
+  [PASS] A5     Unknown fields in message object are ignored         http 200 accepted
+  [PASS] A6     Unknown model name returns 4xx                       http 404 (reference platform returned 503 and was flagged)
+  [PASS] A7     /v1/embeddings behaviour documented                  http 404 - no embedding model is served here
+  [PASS] A8     Video input rejected with a clear error              http 400 At most 0 video(s) may be provided in one prompt. (parameter=video)
+
+B. Parameter validation
+  [PASS] B1     temperature=0 accepted                               http 200 want=2xx 
+  [FAIL] B2     temperature=2 accepted                               http 0 want=2xx None
+  [PASS] B3     temperature=3 rejected                               http 400 want=4xx 
+  [PASS] B4     temperature=-1 rejected                              http 400 want=4xx 
+  [PASS] B5     top_p=0.1 accepted                                   http 200 want=2xx 
+  [PASS] B6     top_p=1.5 rejected                                   http 400 want=4xx 
+  [PASS] B7     frequency_penalty=2 accepted                         http 200 want=2xx 
+  [PASS] B8     frequency_penalty=5 rejected                         http 400 want=4xx 
+  [PASS] B9     presence_penalty=-2 accepted                         http 200 want=2xx 
+  [PASS] B10    negative max_tokens rejected                         http 400 want=4xx 
+  [PASS] B11    unknown parameter ignored                            http 200 want=2xx 
+  [PASS] B12    max_tokens=16 truncates                              http 200 completion_tokens=16 finish=length
+  [FAIL] B13    empty messages rejected                              http 200
+  [PASS] B14    stop sequence honoured                               http 200 content='The user has sent me what appears to be a simple list: "alph'
+  [PASS] B15    seed reproducibility                                 same=True a='Lantern' b='Lantern'
+  [PASS] B16    n=2 multiple candidates                              http 200 choices=2 (reference platform: 65/65 rejected n>1)
+  [PASS] B17    oversized max_tokens handled cleanly                 http 400 max_tokens=99999999 cannot be greater than max_model_len=max_total_tokens=262144. Please request fewer output tokens. (p
+  [PASS] B18    logprobs returned when requested                     http 200 logprobs=present (reference platform: only 14/65 channels)
+
+C. Tool calling
+  [PASS] C1     tool_choice=auto produces a call                     http 200 calls=1
+  [PASS] C2     tool_choice=none suppresses calls                    http 200 calls=0
+  [PASS] C3     tool_choice=specific function forces that tool       http 200 calls=['get_weather']
+  [FAIL] C4     tool_choice=required 5/5                             0/5 produced a tool call
+  [FAIL] C5     nested schema arguments conform                      http 0 args=none
+  [FAIL] C6     correct routing among 20 tools                       http 0 picked=[]
+  [WARN] C7     parallel_tool_calls returns multiple calls           http 0 calls=0
+  [FAIL] C8     multi-turn tool result consumed                      no first-turn call
+  [WARN] C9     streamed tool_calls reassemble                       http 0 name=None args=''
+  [FAIL] C10    tool_call object shape is OpenAI-conformant          http 0 shape_ok=False
+
+D. Structured output
+  [FAIL] D1     response_format=json_object returns valid JSON       http 0 body=''
+  [FAIL] D2     json_schema strict conforms exactly                  http 0 body=''
+  [WARN] D3     $ref / $defs schema accepted                         http 0 None
+
+E. Reasoning control
+  [FAIL] E0     default request reports reasoning_tokens             http 0 reasoning_tokens=None reasoning_len=0
+  [WARN] E1     reasoning_effort=none                                http 0 None (capability boundary)
+  [WARN] E2     reasoning_effort=low                                 http 0 None (capability boundary)
+  [WARN] E3     reasoning_effort=medium                              http 0 None (capability boundary)
+  [WARN] E4     reasoning_effort=high                                http 0 None (capability boundary)
+  [WARN] E5     reasoning_effort=xhigh                               http 0 None (capability boundary)
+  [WARN] E6     reasoning_effort=max                                 http 0 None (capability boundary)
+  [WARN] E7     reasoning_effort=minimal                             http 0 None (capability boundary)
+  [WARN] E8     reasoning_effort=adaptive                            http 0 None (capability boundary)
+  [SKIP] E9     reasoning_tokens grow with effort level              observed=[] monotonic=None
+  [WARN] E10    disable thinking via enable_thinking=false           http 0 reasoning_tokens=None reasoning_len=0
+  [WARN] E11    disable thinking via thinking.type=disabled          http 0 reasoning_tokens=None reasoning_len=0
+  [WARN] E12    disable thinking via chat_template_kwargs.thinking=f http 0 reasoning_tokens=None reasoning_len=0
+  [WARN] E13    disable thinking via reasoning_effort=none           http 0 reasoning_tokens=None reasoning_len=0
+  [FAIL] E14    thinking.budget_tokens=128 behaviour                 http 0 None
+
+F. Streaming quality
+  [FAIL] F1     stream_options.include_usage delivers usage          http 0 usage={}
+  [FAIL] F2     SSE frame structure is standard                      frames=0 done=False objects_ok=False
+  [WARN] F3     streaming and non-streaming agree                    streamed=0 chars nonstream=0 chars match_head=False
+  [WARN] F4     long stream does not drop frames                     http 0 frames=0 chars=0 done=False
+
+G. Usage reporting
+  [FAIL] G1     prompt_tokens scale linearly with input              points=[] max_deviation=None
+  [FAIL] G2     prompt+completion equals total                       usage={}
+  [WARN] G3     cached_tokens reported for a repeated prefix         cached_tokens=None prompt_tokens=None
+  [PASS] G4     streaming and non-streaming prompt_tokens identical  nonstream=None stream=None
+  [WARN] G5     truncated completion_tokens equals max_tokens        completion_tokens=None max_tokens=32
+
+H. Multimodal
+  [FAIL] H1     base64 single image recognised                       http 0 answer=''
+  [FAIL] H2     multiple images counted                              http 0 answer=''
+  [WARN] H3     remote URL image fetched                             http 0 answer=''
+  [WARN] H4     image_url.detail accepted                            http 0 None
+  [WARN] H5     stray image_url.MimeType key tolerated               http 0 None (reference platform P0-1: 1,548 failures/24h)
+
+I. Long context
+  [FAIL] I1     needle retrieval in long context                     http 0 prompt_tokens=None answer='' 0.0s
+  [WARN] I2     large input (~90k words) handled                     http 0 prompt_tokens=None 0.0s None
+  [WARN] I3     over-limit request returns clean 400, engine survive http 0 0.0s None
+  [FAIL] I4     engine still healthy after the over-limit probe      GET /v1/models http 0
+
+J. Protocol and error semantics
+  [FAIL] J1     invalid key returns 401                              http 0
+  [WARN] J2     Anthropic /v1/messages surface                       http 0 - not served here; edge allowlists /v1/ only
+  [WARN] J3     /v1/responses surface                                http 0 None
+  [SKIP] J4     anyOf tool schema consistent across endpoints        /v1/responses not served
+  [WARN] J5     developer role accepted                              http 0 None
+
+K. Concurrency
+  [FAIL] K1     6x concurrent x 12 requests                          ok=0/12 wall=0.0s p50=Nones p95=Nones
+  [PASS] K2     no throttling or server errors under test load       status spread={0: 12}
+
+L. Consistency
+  [WARN] L1     prompt_tokens identical across 6 repeats             values=[]
+  [FAIL] L2     every customer key sees the same model and billing   per_key={"sudarshan": {"http": 0, "prompt_tokens": null, "model": null}, "lioxi": {"http": 0, "prompt_tokens": null, "model": null}, "shaury
+  [WARN] L3     served-model aliases both advertised                 names=[] (config.yaml keeps the legacy alias deliberately)
+  [SKIP] L4     legacy alias still serves                            no alias advertised
+
+M. Message shapes and roles
+  [FAIL] M1     content-array text shape accepted                    http 0
+  [FAIL] M2     system role accepted                                 http 0 content=''
+  [WARN] M3     orphan tool message without assistant turn           http 0 None
+  [WARN] M4     message .name field accepted                         http 0
+  [FAIL] M5     assistant history with vendor reasoning field round- http 0 None (reference platform P1-1: 243 failures/24h)
+  [WARN] M6     assistant history with reasoning_content round-trips http 0 None
+  [WARN] M7     unknown vendor extension web_search_options          http 0 None
+  [WARN] M8     invalid role rejected                                http 0
+
+N. Reasoning budget
+  [WARN] N1     content present at every budget                      rows=[{"max_tokens": 2000, "http": 0, "reasoning_tokens": null, "completion_tokens": null, "content_chars": 0, "correct": false}, {"max_toke
+  [WARN] N2     answer correct across budgets                        correct=[False, False, False]
+  [WARN] N3     small max_tokens can starve visible content          max_tokens=40 content='' reasoning_tokens=None - reference report §7 recheck #1 was exactly this probe defect
+  [WARN] N4     reasoning_effort=none frees the budget for content   content='' reasoning_tokens=None
+
+S. Edge security
+  [FAIL] S1     POST /invocations blocked without credentials        http 0 (want 403/404)
+  [FAIL] S2     POST /scale_elastic_ep blocked without credentials   http 0 (want 403/404)
+  [FAIL] S3     POST /tokenize blocked without credentials           http 0 (want 403/404)
+  [FAIL] S4     POST /detokenize blocked without credentials         http 0 (want 403/404)
+  [FAIL] S5     GET /version blocked without credentials             http 0 (want 403/404)
+  [FAIL] S6     GET /openapi.json blocked without credentials        http 0 (want 403/404)
+  [FAIL] S7     GET /docs blocked without credentials                http 0 (want 403/404)
+  [FAIL] S8     GET /metrics blocked without credentials             http 0 (want 403/404)
+  [FAIL] S9     GET /health blocked without credentials              http 0 (want 403/404)
+  [FAIL] S10    upstream key rejected at the public edge             http 0 - the upstream credential must not work from outside
+  [WARN] S11    plaintext HTTP redirects to TLS                      http 0 (urllib follows the 301)
+
+====================================================================
+total=106  PASS=29  WARN=39  FAIL=35  SKIP=3   in 653.6s
+====================================================================
+  FAIL  B2     temperature=2 accepted :: http 0 want=2xx None
+  FAIL  B13    empty messages rejected :: http 200
+  FAIL  C4     tool_choice=required 5/5 :: 0/5 produced a tool call
+  FAIL  C5     nested schema arguments conform :: http 0 args=none
+  FAIL  C6     correct routing among 20 tools :: http 0 picked=[]
+  WARN  C7     parallel_tool_calls returns multiple calls :: http 0 calls=0
+  FAIL  C8     multi-turn tool result consumed :: no first-turn call
+  WARN  C9     streamed tool_calls reassemble :: http 0 name=None args=''
+  FAIL  C10    tool_call object shape is OpenAI-conformant :: http 0 shape_ok=False
+  FAIL  D1     response_format=json_object returns valid JSON :: http 0 body=''
+  FAIL  D2     json_schema strict conforms exactly :: http 0 body=''
+  WARN  D3     $ref / $defs schema accepted :: http 0 None
+  FAIL  E0     default request reports reasoning_tokens :: http 0 reasoning_tokens=None reasoning_len=0
+  WARN  E1     reasoning_effort=none :: http 0 None (capability boundary)
+  WARN  E2     reasoning_effort=low :: http 0 None (capability boundary)
+  WARN  E3     reasoning_effort=medium :: http 0 None (capability boundary)
+  WARN  E4     reasoning_effort=high :: http 0 None (capability boundary)
+  WARN  E5     reasoning_effort=xhigh :: http 0 None (capability boundary)
+  WARN  E6     reasoning_effort=max :: http 0 None (capability boundary)
+  WARN  E7     reasoning_effort=minimal :: http 0 None (capability boundary)
+  WARN  E8     reasoning_effort=adaptive :: http 0 None (capability boundary)
+  WARN  E10    disable thinking via enable_thinking=false :: http 0 reasoning_tokens=None reasoning_len=0
+  WARN  E11    disable thinking via thinking.type=disabled :: http 0 reasoning_tokens=None reasoning_len=0
+  WARN  E12    disable thinking via chat_template_kwargs.thinking=false :: http 0 reasoning_tokens=None reasoning_len=0
+  WARN  E13    disable thinking via reasoning_effort=none :: http 0 reasoning_tokens=None reasoning_len=0
+  FAIL  E14    thinking.budget_tokens=128 behaviour :: http 0 None
+  FAIL  F1     stream_options.include_usage delivers usage :: http 0 usage={}
+  FAIL  F2     SSE frame structure is standard :: frames=0 done=False objects_ok=False
+  WARN  F3     streaming and non-streaming agree :: streamed=0 chars nonstream=0 chars match_head=False
+  WARN  F4     long stream does not drop frames :: http 0 frames=0 chars=0 done=False
+  FAIL  G1     prompt_tokens scale linearly with input :: points=[] max_deviation=None
+  FAIL  G2     prompt+completion equals total :: usage={}
+  WARN  G3     cached_tokens reported for a repeated prefix :: cached_tokens=None prompt_tokens=None
+  WARN  G5     truncated completion_tokens equals max_tokens :: completion_tokens=None max_tokens=32
+  FAIL  H1     base64 single image recognised :: http 0 answer=''
+  FAIL  H2     multiple images counted :: http 0 answer=''
+  WARN  H3     remote URL image fetched :: http 0 answer=''
+  WARN  H4     image_url.detail accepted :: http 0 None
+  WARN  H5     stray image_url.MimeType key tolerated :: http 0 None (reference platform P0-1: 1,548 failures/24h)
+  FAIL  I1     needle retrieval in long context :: http 0 prompt_tokens=None answer='' 0.0s
+  WARN  I2     large input (~90k words) handled :: http 0 prompt_tokens=None 0.0s None
+  WARN  I3     over-limit request returns clean 400, engine survives :: http 0 0.0s None
+  FAIL  I4     engine still healthy after the over-limit probe :: GET /v1/models http 0
+  FAIL  J1     invalid key returns 401 :: http 0
+  WARN  J2     Anthropic /v1/messages surface :: http 0 - not served here; edge allowlists /v1/ only
+  WARN  J3     /v1/responses surface :: http 0 None
+  WARN  J5     developer role accepted :: http 0 None
+  FAIL  K1     6x concurrent x 12 requests :: ok=0/12 wall=0.0s p50=Nones p95=Nones
+  WARN  L1     prompt_tokens identical across 6 repeats :: values=[]
+  FAIL  L2     every customer key sees the same model and billing :: per_key={"sudarshan": {"http": 0, "prompt_tokens": null, "model": null}, "lioxi": {"http": 0, "prompt_tokens": null, "mo
+  WARN  L3     served-model aliases both advertised :: names=[] (config.yaml keeps the legacy alias deliberately)
+  FAIL  M1     content-array text shape accepted :: http 0
+  FAIL  M2     system role accepted :: http 0 content=''
+  WARN  M3     orphan tool message without assistant turn :: http 0 None
+  WARN  M4     message .name field accepted :: http 0
+  FAIL  M5     assistant history with vendor reasoning field round-trips :: http 0 None (reference platform P1-1: 243 failures/24h)
+  WARN  M6     assistant history with reasoning_content round-trips :: http 0 None
+  WARN  M7     unknown vendor extension web_search_options :: http 0 None
+  WARN  M8     invalid role rejected :: http 0
+  WARN  N1     content present at every budget :: rows=[{"max_tokens": 2000, "http": 0, "reasoning_tokens": null, "completion_tokens": null, "content_chars": 0, "correct"
+  WARN  N2     answer correct across budgets :: correct=[False, False, False]
+  WARN  N3     small max_tokens can starve visible content :: max_tokens=40 content='' reasoning_tokens=None - reference report §7 recheck #1 was exactly this probe defect
+  WARN  N4     reasoning_effort=none frees the budget for content :: content='' reasoning_tokens=None
+  FAIL  S1     POST /invocations blocked without credentials :: http 0 (want 403/404)
+  FAIL  S2     POST /scale_elastic_ep blocked without credentials :: http 0 (want 403/404)
+  FAIL  S3     POST /tokenize blocked without credentials :: http 0 (want 403/404)
+  FAIL  S4     POST /detokenize blocked without credentials :: http 0 (want 403/404)
+  FAIL  S5     GET /version blocked without credentials :: http 0 (want 403/404)
+  FAIL  S6     GET /openapi.json blocked without credentials :: http 0 (want 403/404)
+  FAIL  S7     GET /docs blocked without credentials :: http 0 (want 403/404)
+  FAIL  S8     GET /metrics blocked without credentials :: http 0 (want 403/404)
+  FAIL  S9     GET /health blocked without credentials :: http 0 (want 403/404)
+  FAIL  S10    upstream key rejected at the public edge :: http 0 - the upstream credential must not work from outside
+  WARN  S11    plaintext HTTP redirects to TLS :: http 0 (urllib follows the 301)
+
+wrote /scratch/eval/runs/20260919T145955Z-baseline/health_results.json

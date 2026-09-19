@@ -1,0 +1,136 @@
+Production statistics  (collected 2026-09-19T15:11:12Z)
+log coverage: 3487 s  rows: 651
+
+== window 1h  [PARTIAL] ==
+  requests=651 successful=543 failures=108 failure_rate=0.1659
+  edge latency p50=57.892 p95=372.766 p99=1043.903
+    cause 400 request body rejected by the engine             75  0.6944
+    cause 401 missing or invalid customer key                 27  0.25
+    cause 404 unknown route                                    4  0.037
+    cause 499 client disconnected before response              1  0.0093
+    cause 500 upstream/server error                            1  0.0093
+    cust  sudarshan            req=571    fail=68    rate=0.1191
+    cust  evalbot              req=42     fail=13    rate=0.3095
+    cust  (unauthenticated)    req=27     fail=27    rate=1.0
+    cust  ops                  req=7      fail=0     rate=0.0
+    cust  lioxi                req=2      fail=0     rate=0.0
+    cust  shaurya              req=2      fail=0     rate=0.0
+
+== window 3h  [PARTIAL] ==
+  requests=651 successful=543 failures=108 failure_rate=0.1659
+  edge latency p50=57.892 p95=372.766 p99=1043.903
+    cause 400 request body rejected by the engine             75  0.6944
+    cause 401 missing or invalid customer key                 27  0.25
+    cause 404 unknown route                                    4  0.037
+    cause 499 client disconnected before response              1  0.0093
+    cause 500 upstream/server error                            1  0.0093
+    cust  sudarshan            req=571    fail=68    rate=0.1191
+    cust  evalbot              req=42     fail=13    rate=0.3095
+    cust  (unauthenticated)    req=27     fail=27    rate=1.0
+    cust  ops                  req=7      fail=0     rate=0.0
+    cust  lioxi                req=2      fail=0     rate=0.0
+    cust  shaurya              req=2      fail=0     rate=0.0
+
+== window 24h  [PARTIAL] ==
+  requests=651 successful=543 failures=108 failure_rate=0.1659
+  edge latency p50=57.892 p95=372.766 p99=1043.903
+    cause 400 request body rejected by the engine             75  0.6944
+    cause 401 missing or invalid customer key                 27  0.25
+    cause 404 unknown route                                    4  0.037
+    cause 499 client disconnected before response              1  0.0093
+    cause 500 upstream/server error                            1  0.0093
+    cust  sudarshan            req=571    fail=68    rate=0.1191
+    cust  evalbot              req=42     fail=13    rate=0.3095
+    cust  (unauthenticated)    req=27     fail=27    rate=1.0
+    cust  ops                  req=7      fail=0     rate=0.0
+    cust  lioxi                req=2      fail=0     rate=0.0
+    cust  shaurya              req=2      fail=0     rate=0.0
+
+== engine ==
+{
+  "note": "counters are cumulative since the last engine start, not windowed",
+  "engine_start_utc": "2026-09-19T14:15:47Z",
+  "requests_success_total": 494.0,
+  "prompt_tokens_total": 15692633.0,
+  "generation_tokens_total": 329003.0,
+  "prompt_tokens_cached_total": 7820672.0,
+  "cached_token_share": 0.4984,
+  "prefix_cache_queries_total": 15910650.0,
+  "prefix_cache_hits_total": 7839104.0,
+  "prefix_cache_hit_rate": 0.4927,
+  "preemptions_total": 90.0,
+  "requests_running": 0.0,
+  "requests_waiting": 0.0,
+  "kv_cache_usage_perc": 0.0,
+  "tool_call_parser_invocations_total": 81356.0,
+  "latency_seconds": {
+    "ttft": {
+      "0.5": 2.3326,
+      "0.9": 60.4068,
+      "0.95": 82.7097,
+      "0.99": 144.5419
+    },
+    "tpot": {
+      "0.5": 0.2298,
+      "0.9": 0.4067,
+      "0.95": 0.523,
+      "0.99": 0.7206
+    },
+    "itl": {
+      "0.5": 0.179,
+      "0.9": 0.5932,
+      "0.95": 0.7191,
+      "0.99": 0.9471
+    },
+    "e2e": {
+      "0.5": 46.2069,
+      "0.9": 237.9759,
+      "0.95": 432.8276,
+      "0.99": 1129.6
+    },
+    "queue": {
+      "0.5": 0.2219,
+      "0.9": 38.2857,
+      "0.95": 73.6875,
+      "0.99": 110.7375
+    },
+    "prefill": {
+      "0.5": 1.1016,
+      "0.9": 6.619,
+      "0.95": 9.5595,
+      "0.99": 19.2167
+    },
+    "decode": {
+      "0.5": 33.25,
+      "0.9": 231.8769,
+      "0.95": 420.4444,
+      "0.99": 1129.6
+    }
+  },
+  "request_shape": {
+    "prompt_tokens": {
+      "0.5": 6836.7347,
+      "0.9": 88250.0,
+      "0.95": 146363.6364,
+      "0.99": 200000.0
+    },
+    "generation_tokens": {
+      "0.5": 162.9921,
+      "0.9": 926.0,
+      "0.95": 1692.0,
+      "0.99": 4412.0
+    },
+    "client_max_tokens": {
+      "0.5": 7937.5,
+      "0.9": 30883.7209,
+      "0.95": 48116.2791,
+      "0.99": 200000.0
+    },
+    "iteration_tokens": {
+      "0.5": 25.4058,
+      "0.9": 59.7977,
+      "0.95": 63.364,
+      "0.99": 16194.9538
+    }
+  }
+}

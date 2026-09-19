@@ -49,6 +49,10 @@ RATE_WINDOW_S = 60.0        # trailing window for headline throughput
 SERIES_POINTS = 180
 ACCESS_WINDOW_S = 900.0     # 15 min of per-customer attribution
 ACCESS_MAX_ROWS = 40000
+# Longer reporting windows, rebuilt from the rotated logs on a slow timer.
+ROLLUP_WINDOWS = (("1h", 3600.0), ("3h", 10800.0), ("24h", 86400.0))
+ROLLUP_INTERVAL = 60.0
+ROLLUP_MAX_BYTES = 200_000_000   # cap the rescan so a huge log cannot stall it
 CERT_WARN_DAYS = 21         # certbot renews at 30; below this is a real problem
 
 _SAMPLE_RE = re.compile(
@@ -70,6 +74,9 @@ COUNTERS = {
     "cache_hits": ["vllm:prefix_cache_hits_total",
                    "vllm:gpu_prefix_cache_hits_total"],
     "cached_prompt_tokens": ["vllm:prompt_tokens_cached_total"],
+    # Tool calling is a first-class feature of this endpoint (kimi_k3 parser),
+    # so its volume belongs on the dashboard rather than only in a test report.
+    "tool_calls": ["vllm:tool_call_parser_invocations_total"],
 }
 GAUGES = {
     "running": ["vllm:num_requests_running"],
@@ -78,6 +85,10 @@ GAUGES = {
     # Pre-0.9 vLLM exposed a ready-made hit rate instead of the counters above.
     "hit_rate_gauge": ["vllm:gpu_prefix_cache_hit_rate"],
 }
+# Why a request is waiting, not just that it is: "capacity" means the engine is
+# genuinely full, which is an operator problem, while "deferred" is ordinary
+# scheduling. The single num_requests_waiting gauge cannot tell them apart.
+WAIT_REASONS = "vllm:num_requests_waiting_by_reason"
 INFO = {
     "cache_config": ["vllm:cache_config_info"],
 }
@@ -89,8 +100,18 @@ HISTOGRAMS = {
     "e2el": ["vllm:e2e_request_latency_seconds",
              "vllm:request_inference_time_seconds"],
     "queue": ["vllm:request_queue_time_seconds"],
+    # Prefill and decode split the request: a slow prefill is a prompt-size or
+    # cache-miss problem, a slow decode is a batching problem. They need
+    # different fixes, so showing only end-to-end hides which one to apply.
+    "prefill": ["vllm:request_prefill_time_seconds"],
+    "decode": ["vllm:request_decode_time_seconds"],
     "prompt_len": ["vllm:request_prompt_tokens"],
     "gen_len": ["vllm:request_generation_tokens"],
+    # What clients ASK for, as opposed to what they get. vLLM reserves
+    # prompt+max_tokens against one window, so a fleet defaulting to a huge
+    # max_tokens is the documented cause of spurious 400s.
+    "client_max_tokens": ["vllm:request_params_max_tokens"],
+    "batch_tokens": ["vllm:iteration_tokens_total"],
 }
 
 
@@ -203,7 +224,23 @@ def pick(mapping, key, store):
     return None, None
 
 
-def percentiles_from_bucket_delta(prev, cur, quantiles=(0.5, 0.9, 0.99)):
+def hist_sum_count(prev, cur):
+    """Exact mean over the window from a histogram's own _sum and _count.
+
+    Percentiles interpolated from bucket edges are approximations; the mean is
+    not, because sum and count are plain counters. Reported alongside the
+    percentiles so a reader can see when the tail is dragging the average.
+    """
+    if not cur:
+        return None
+    ds = cur[0] - (prev[0] if prev else 0.0)
+    dc = cur[1] - (prev[1] if prev else 0.0)
+    if dc <= 0 or ds < 0:
+        return None
+    return ds / dc
+
+
+def percentiles_from_bucket_delta(prev, cur, quantiles=(0.5, 0.9, 0.95, 0.99)):
     """Interpolate percentiles from the change in cumulative histogram buckets.
 
     Returns seconds, or None per quantile when the window holds no samples.
@@ -410,6 +447,134 @@ class AccessTail:
         }
 
 
+def failure_cause(status):
+    """Group a rejection by what an operator would actually do about it.
+
+    Derived from HTTP status alone, because that is what the access log
+    carries. nginx rejects 401/403/429 itself and never records an upstream
+    body, so a finer breakdown of 400s would have to be invented rather than
+    measured.
+    """
+    return {
+        400: "400 body rejected by the engine",
+        401: "401 missing or invalid customer key",
+        403: "403 path not on the edge allowlist",
+        404: "404 unknown route",
+        413: "413 body over the 256 MB cap",
+        429: "429 per-customer rate or concurrency cap",
+        499: "499 client disconnected early",
+    }.get(status, ("%dxx " % (status // 100)) + ("server error" if status >= 500
+                                                 else "client error"))
+
+
+class LogRollup:
+    """Hour/day aggregates over the whole retained log, rotations included.
+
+    AccessTail deliberately keeps only a short in-memory tail, which cannot
+    answer "what was the failure rate today". This walks the rotated and
+    gzipped files on a slow timer so the longer windows survive a midnight
+    rotation, and marks a window partial when the log does not reach back far
+    enough to support it -- an under-covered window must not be mistaken for a
+    real 24-hour measurement.
+    """
+
+    def __init__(self, path, windows=ROLLUP_WINDOWS):
+        self.path = path
+        self.windows = windows
+        self.lock = threading.Lock()
+        self.data = {"available": False, "error": "not sampled yet", "windows": {}}
+
+    def _iter_lines(self):
+        import glob
+        import gzip
+        files = sorted(glob.glob(self.path + "*"))
+        budget = ROLLUP_MAX_BYTES
+        for p in reversed(files):        # newest first, stop once far enough back
+            if budget <= 0:
+                return
+            opener = gzip.open if p.endswith(".gz") else open
+            try:
+                size = os.path.getsize(p)
+                with opener(p, "rt", errors="replace") as f:
+                    if not p.endswith(".gz") and size > budget:
+                        f.seek(size - budget)
+                        f.readline()     # discard the partial line
+                    budget -= size
+                    for line in f:
+                        yield line
+            except OSError:
+                continue
+
+    def refresh(self):
+        now = time.time()
+        longest = max(s for _, s in self.windows)
+        rows = []
+        try:
+            for line in self._iter_lines():
+                m = _ACCESS_RE.match(line.strip())
+                if not m:
+                    continue
+                ts = AccessTail._parse_ts(m.group("ts"))
+                if ts is None or now - ts > longest:
+                    continue
+                rows.append((ts, m.group("cust") or "(unauthenticated)",
+                             int(m.group("status")), m.group("path").split("?")[0],
+                             _to_float(m.group("req")), int(m.group("in")),
+                             int(m.group("out"))))
+        except Exception as e:
+            with self.lock:
+                self.data = {"available": False,
+                             "error": "%s: %s" % (type(e).__name__, e),
+                             "windows": {}}
+            return
+
+        coverage = (now - min(r[0] for r in rows)) if rows else 0.0
+        out = {}
+        for label, secs in self.windows:
+            sel = [r for r in rows if now - r[0] <= secs]
+            total = len(sel)
+            fails = [r for r in sel if r[2] >= 400]
+            causes = {}
+            for r in fails:
+                c = failure_cause(r[2])
+                causes[c] = causes.get(c, 0) + 1
+            paths = {}
+            for r in sel:
+                p = paths.setdefault(r[3], [0, 0])
+                p[0] += 1
+                if r[2] >= 400:
+                    p[1] += 1
+            lat = [r[4] for r in sel if r[2] < 400 and r[4] is not None]
+            out[label] = {
+                "window_s": secs,
+                "partial": secs > coverage,
+                "requests": total,
+                "failures": len(fails),
+                "failure_rate": (len(fails) / total) if total else None,
+                "server_error_rate": (sum(1 for r in sel if r[2] >= 500) / total)
+                                     if total else None,
+                "req_pm": (total / secs * 60) if total else 0.0,
+                "tokens_in_bytes": sum(r[5] for r in sel),
+                "tokens_out_bytes": sum(r[6] for r in sel),
+                "p50_s": percentile(lat, 0.5),
+                "p95_s": percentile(lat, 0.95),
+                "p99_s": percentile(lat, 0.99),
+                "causes": [{"cause": c, "requests": n,
+                            "share": n / len(fails) if fails else None}
+                           for c, n in sorted(causes.items(), key=lambda kv: -kv[1])],
+                "paths": [{"path": k, "requests": v[0], "failures": v[1],
+                           "failure_rate": v[1] / v[0]}
+                          for k, v in sorted(paths.items(), key=lambda kv: -kv[1][0])][:8],
+            }
+        with self.lock:
+            self.data = {"available": True, "error": None, "coverage_s": coverage,
+                         "rows": len(rows), "sampled_at": now, "windows": out}
+
+    def view(self):
+        with self.lock:
+            return dict(self.data)
+
+
 class Monitor:
     def __init__(self):
         self.lock = threading.Lock()
@@ -447,7 +612,7 @@ class Monitor:
             return
 
         now = time.time()
-        cur = {"ts": now, "counters": {}, "gauges": {}, "buckets": {}}
+        cur = {"ts": now, "counters": {}, "gauges": {}, "buckets": {}, "hsum": {}}
         for key in COUNTERS:
             _, v = pick(COUNTERS, key, scalars)
             cur["counters"][key] = v
@@ -457,7 +622,29 @@ class Monitor:
         for key in HISTOGRAMS:
             name, _ = pick(HISTOGRAMS, key, buckets)
             cur["buckets"][key] = buckets.get(name, {}) if name else {}
+            # The family that carried buckets is the one whose sum/count to
+            # trust; a fallback candidate may exist but be empty.
+            s = scalars.get((name or "") + "_sum")
+            c = scalars.get((name or "") + "_count")
+            cur["hsum"][key] = (s, c) if (s is not None and c is not None) else None
         _, cfg = pick(INFO, "cache_config", info)
+
+        wait_reasons = {}
+        for full, v in scalars.items():
+            if full == WAIT_REASONS:
+                wait_reasons["unlabelled"] = v
+        for line in body.splitlines():
+            if not line.startswith(WAIT_REASONS + "{"):
+                continue
+            m = _SAMPLE_RE.match(line)
+            if not m:
+                continue
+            labels = dict(_LABEL_RE.findall(m.group("labels") or ""))
+            reason = labels.get("reason") or "unknown"
+            val = _to_float(m.group("value"))
+            if val is not None:
+                wait_reasons[reason] = wait_reasons.get(reason, 0.0) + val
+        cur["wait_reasons"] = wait_reasons
 
         prev = self._prev
         reset = False
@@ -496,6 +683,9 @@ class Monitor:
             "cache_hit_total": cur["counters"].get("cache_hits"),
             "cached_prompt_total": cur["counters"].get("cached_prompt_tokens"),
             "hit_rate_gauge": cur["gauges"].get("hit_rate_gauge"),
+            "tool_calls_total": cur["counters"].get("tool_calls"),
+            "tool_call_rate": rates.get("tool_calls"),
+            "wait_reasons": cur["wait_reasons"] or None,
         }
 
         with self.lock:
@@ -614,14 +804,15 @@ class Monitor:
             scrapes = self.scrape_count
             resets = self.reset_count
             prev_buckets = self._prev["buckets"] if self._prev else {}
+            prev_hsum = self._prev["hsum"] if self._prev else {}
             uptime = time.time() - self.started
             cache_cfg = dict(self.cache_config)
             facts = dict(self.facts)
 
         # Each sample carries its own histogram snapshot for windowed
-        # percentiles; strip it from the wire payload.
+        # percentiles; strip those internals from the wire payload.
         latest = {k: v for k, v in samples[-1].items()
-                  if k != "_buckets_snapshot"} if samples else None
+                  if not k.startswith("_")} if samples else None
 
         # Windowed throughput from counter endpoints (robust to scrape jitter).
         window = None
@@ -675,12 +866,16 @@ class Monitor:
                     base_idx = i
                     break
             base = samples[base_idx].get("_buckets_snapshot")
+            base_hsum = samples[base_idx].get("_hsum_snapshot")
             for key in HISTOGRAMS:
                 cur = prev_buckets.get(key, {})
                 got = percentiles_from_bucket_delta(base.get(key) if base else None, cur)
                 lat[key] = {
+                    "avg": hist_sum_count(
+                        (base_hsum or {}).get(key), prev_hsum.get(key)),
                     "p50": got.get(0.5),
                     "p90": got.get(0.9),
+                    "p95": got.get(0.95),
                     "p99": got.get(0.99),
                 }
 
@@ -748,6 +943,7 @@ class Monitor:
             "gpu": gpu,
             "series": series,
             "access": access,
+            "rollup": ROLLUP.view(),
             "alerts": self.alerts(state, window, latest, capacity, access, facts),
         }
 
@@ -863,6 +1059,7 @@ class Monitor:
                 with self.lock:
                     if self.samples and self._prev:
                         self.samples[-1]["_buckets_snapshot"] = self._prev["buckets"]
+                        self.samples[-1]["_hsum_snapshot"] = self._prev["hsum"]
             except Exception as e:
                 self._degrade("monitor_error", "%s: %s" % (type(e).__name__, e))
             time.sleep(SCRAPE_INTERVAL)
@@ -874,6 +1071,14 @@ class Monitor:
             except Exception:
                 pass
             time.sleep(SCRAPE_INTERVAL)
+
+    def run_rollup_loop(self):
+        while True:
+            try:
+                ROLLUP.refresh()
+            except Exception:
+                pass
+            time.sleep(ROLLUP_INTERVAL)
 
     def run_gpu_loop(self):
         while True:
@@ -894,6 +1099,7 @@ class Monitor:
 
 
 ACCESS = AccessTail(ACCESS_LOG)
+ROLLUP = LogRollup(ACCESS_LOG)
 MON = Monitor()
 
 HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
@@ -939,6 +1145,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     threading.Thread(target=MON.run_metrics_loop, daemon=True).start()
     threading.Thread(target=MON.run_access_loop, daemon=True).start()
+    threading.Thread(target=MON.run_rollup_loop, daemon=True).start()
     threading.Thread(target=MON.run_gpu_loop, daemon=True).start()
     threading.Thread(target=MON.run_facts_loop, daemon=True).start()
     srv = ThreadingHTTPServer((LISTEN_ADDR, LISTEN_PORT), Handler)

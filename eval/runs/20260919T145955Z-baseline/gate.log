@@ -1,0 +1,38 @@
+================================================================
+TIER 1  corruption probes
+----------------------------------------------------------------
+  [PASS] top1(Paris)            -0.257  margin +3.56 over ' Berlin'
+  [PASS] top1(Jupiter)          -0.570  margin +2.37 over ' ______'
+  [PASS] top1(Celsius)          -0.725  margin +1.13 over ' cent'
+  [PASS] counting               10 11 12 13 14 15
+  [PASS] semantic stability     facts consistent across 3 samples (3 distinct texts)
+
+TIER 2  reasoning correctness
+----------------------------------------------------------------
+  [PASS] Janet has 3 boxes with 7 apples each. She eats   want=17    got=17
+  [PASS] A train travels 60 km in 45 minutes. What is i   want=80    got=80
+  [PASS] If 5 shirts cost $75, how much do 8 shirts cos   want=120   got=120
+  [PASS] What is the sum of all positive integers from    want=210   got=210
+  [PASS] What is 15% of 240?                              want=36    got=36
+  [PASS] A rectangle is 12 cm by 8 cm. What is its peri   want=40    got=40
+  [PASS] If x + 7 = 22, what is 3x?                       want=45    got=45
+  [PASS] Compute 144 divided by 12, then add 5 times 3.   want=27    got=27
+  [PASS] What is half of 86, plus 19?                     want=62    got=62
+  [PASS] A book has 300 pages. Sam read 2/5 of it. How    want=180   got=180
+  [PASS] 3 workers finish a job in 6 hours. How many ho   want=2     got=2
+  [PASS] A $200 item is discounted 25%, then a further    want=135   got=135
+  [PASS] What is 7 squared minus 4 squared?               want=33    got=33
+  [PASS] A car drives at 50 mph for 2.5 hours. How many   want=125   got=125
+  [PASS] There are 24 students and one third are absent   want=16    got=16
+  [PASS] Compute 2 + 2 * 3 squared.                       want=20    got=20
+  -> 16/16 correct (floor 14)
+
+TIER 3  long-context integrity (production prompt shape)
+----------------------------------------------------------------
+  [PASS] needle retrieval  {'prompt_tokens': 12026, 'answer': '74812', 'expected': 74812, 'got': 74812}
+
+baseline 2026-09-18T12:25:45Z: tier2 16/16  (now 16)
+
+================================================================
+GATE PASS in 22.9s
+================================================================

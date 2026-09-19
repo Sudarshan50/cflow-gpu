@@ -1,0 +1,585 @@
+{
+  "collected_utc": "2026-09-19T15:11:12Z",
+  "log_sources": [
+    "/var/log/k3/usage.log"
+  ],
+  "rows_parsed": 651,
+  "oldest_row_utc": "2026-09-19T14:12:38Z",
+  "newest_row_utc": "2026-09-19T15:10:45Z",
+  "coverage_seconds": 3487.0,
+  "windows": {
+    "1h": {
+      "window": "1h",
+      "window_seconds": 3600,
+      "requests": 651,
+      "successful": 543,
+      "failures": 108,
+      "failure_rate": 0.1659,
+      "server_error_rate": 0.00154,
+      "requests_per_minute": 10.85,
+      "status_spread": {
+        "401": 27,
+        "200": 543,
+        "400": 75,
+        "404": 4,
+        "499": 1,
+        "500": 1
+      },
+      "failure_causes": [
+        {
+          "cause": "400 request body rejected by the engine",
+          "requests": 75,
+          "share": 0.6944
+        },
+        {
+          "cause": "401 missing or invalid customer key",
+          "requests": 27,
+          "share": 0.25
+        },
+        {
+          "cause": "404 unknown route",
+          "requests": 4,
+          "share": 0.037
+        },
+        {
+          "cause": "499 client disconnected before response",
+          "requests": 1,
+          "share": 0.0093
+        },
+        {
+          "cause": "500 upstream/server error",
+          "requests": 1,
+          "share": 0.0093
+        }
+      ],
+      "per_customer": [
+        {
+          "customer": "sudarshan",
+          "requests": 571,
+          "failures": 68,
+          "failure_rate": 0.1191,
+          "throttled": 0,
+          "distinct_ips": 2,
+          "in_bytes": 110776445,
+          "out_bytes": 25895264,
+          "p50_s": 66.295,
+          "p95_s": 399.924
+        },
+        {
+          "customer": "evalbot",
+          "requests": 42,
+          "failures": 13,
+          "failure_rate": 0.3095,
+          "throttled": 0,
+          "distinct_ips": 1,
+          "in_bytes": 17747,
+          "out_bytes": 184106,
+          "p50_s": 19.904,
+          "p95_s": 66.409
+        },
+        {
+          "customer": "(unauthenticated)",
+          "requests": 27,
+          "failures": 27,
+          "failure_rate": 1.0,
+          "throttled": 0,
+          "distinct_ips": 7,
+          "in_bytes": 2599,
+          "out_bytes": 2160,
+          "p50_s": null,
+          "p95_s": null
+        },
+        {
+          "customer": "ops",
+          "requests": 7,
+          "failures": 0,
+          "failure_rate": 0.0,
+          "throttled": 0,
+          "distinct_ips": 2,
+          "in_bytes": 911,
+          "out_bytes": 5888,
+          "p50_s": 0.002,
+          "p95_s": 2.115
+        },
+        {
+          "customer": "lioxi",
+          "requests": 2,
+          "failures": 0,
+          "failure_rate": 0.0,
+          "throttled": 0,
+          "distinct_ips": 1,
+          "in_bytes": 164,
+          "out_bytes": 1798,
+          "p50_s": 0.0,
+          "p95_s": 0.002
+        },
+        {
+          "customer": "shaurya",
+          "requests": 2,
+          "failures": 0,
+          "failure_rate": 0.0,
+          "throttled": 0,
+          "distinct_ips": 1,
+          "in_bytes": 168,
+          "out_bytes": 1798,
+          "p50_s": 0.0,
+          "p95_s": 0.001
+        }
+      ],
+      "per_path": [
+        {
+          "path": "/v1/chat/completions",
+          "requests": 606,
+          "failures": 83,
+          "failure_rate": 0.137
+        },
+        {
+          "path": "/v1/models",
+          "requests": 37,
+          "failures": 23,
+          "failure_rate": 0.6216
+        },
+        {
+          "path": "/v1/completions",
+          "requests": 3,
+          "failures": 0,
+          "failure_rate": 0.0
+        },
+        {
+          "path": "/v1/responses",
+          "requests": 3,
+          "failures": 0,
+          "failure_rate": 0.0
+        },
+        {
+          "path": "/v1/embeddings",
+          "requests": 2,
+          "failures": 2,
+          "failure_rate": 1.0
+        }
+      ],
+      "edge_latency_s": {
+        "p50": 57.892,
+        "p90": 300.723,
+        "p95": 372.766,
+        "p99": 1043.903
+      },
+      "bytes_in": 110798034,
+      "bytes_out": 26091014,
+      "partial": true,
+      "actual_coverage_seconds": 3487.0
+    },
+    "3h": {
+      "window": "3h",
+      "window_seconds": 10800,
+      "requests": 651,
+      "successful": 543,
+      "failures": 108,
+      "failure_rate": 0.1659,
+      "server_error_rate": 0.00154,
+      "requests_per_minute": 3.617,
+      "status_spread": {
+        "401": 27,
+        "200": 543,
+        "400": 75,
+        "404": 4,
+        "499": 1,
+        "500": 1
+      },
+      "failure_causes": [
+        {
+          "cause": "400 request body rejected by the engine",
+          "requests": 75,
+          "share": 0.6944
+        },
+        {
+          "cause": "401 missing or invalid customer key",
+          "requests": 27,
+          "share": 0.25
+        },
+        {
+          "cause": "404 unknown route",
+          "requests": 4,
+          "share": 0.037
+        },
+        {
+          "cause": "499 client disconnected before response",
+          "requests": 1,
+          "share": 0.0093
+        },
+        {
+          "cause": "500 upstream/server error",
+          "requests": 1,
+          "share": 0.0093
+        }
+      ],
+      "per_customer": [
+        {
+          "customer": "sudarshan",
+          "requests": 571,
+          "failures": 68,
+          "failure_rate": 0.1191,
+          "throttled": 0,
+          "distinct_ips": 2,
+          "in_bytes": 110776445,
+          "out_bytes": 25895264,
+          "p50_s": 66.295,
+          "p95_s": 399.924
+        },
+        {
+          "customer": "evalbot",
+          "requests": 42,
+          "failures": 13,
+          "failure_rate": 0.3095,
+          "throttled": 0,
+          "distinct_ips": 1,
+          "in_bytes": 17747,
+          "out_bytes": 184106,
+          "p50_s": 19.904,
+          "p95_s": 66.409
+        },
+        {
+          "customer": "(unauthenticated)",
+          "requests": 27,
+          "failures": 27,
+          "failure_rate": 1.0,
+          "throttled": 0,
+          "distinct_ips": 7,
+          "in_bytes": 2599,
+          "out_bytes": 2160,
+          "p50_s": null,
+          "p95_s": null
+        },
+        {
+          "customer": "ops",
+          "requests": 7,
+          "failures": 0,
+          "failure_rate": 0.0,
+          "throttled": 0,
+          "distinct_ips": 2,
+          "in_bytes": 911,
+          "out_bytes": 5888,
+          "p50_s": 0.002,
+          "p95_s": 2.115
+        },
+        {
+          "customer": "lioxi",
+          "requests": 2,
+          "failures": 0,
+          "failure_rate": 0.0,
+          "throttled": 0,
+          "distinct_ips": 1,
+          "in_bytes": 164,
+          "out_bytes": 1798,
+          "p50_s": 0.0,
+          "p95_s": 0.002
+        },
+        {
+          "customer": "shaurya",
+          "requests": 2,
+          "failures": 0,
+          "failure_rate": 0.0,
+          "throttled": 0,
+          "distinct_ips": 1,
+          "in_bytes": 168,
+          "out_bytes": 1798,
+          "p50_s": 0.0,
+          "p95_s": 0.001
+        }
+      ],
+      "per_path": [
+        {
+          "path": "/v1/chat/completions",
+          "requests": 606,
+          "failures": 83,
+          "failure_rate": 0.137
+        },
+        {
+          "path": "/v1/models",
+          "requests": 37,
+          "failures": 23,
+          "failure_rate": 0.6216
+        },
+        {
+          "path": "/v1/completions",
+          "requests": 3,
+          "failures": 0,
+          "failure_rate": 0.0
+        },
+        {
+          "path": "/v1/responses",
+          "requests": 3,
+          "failures": 0,
+          "failure_rate": 0.0
+        },
+        {
+          "path": "/v1/embeddings",
+          "requests": 2,
+          "failures": 2,
+          "failure_rate": 1.0
+        }
+      ],
+      "edge_latency_s": {
+        "p50": 57.892,
+        "p90": 300.723,
+        "p95": 372.766,
+        "p99": 1043.903
+      },
+      "bytes_in": 110798034,
+      "bytes_out": 26091014,
+      "partial": true,
+      "actual_coverage_seconds": 3487.0
+    },
+    "24h": {
+      "window": "24h",
+      "window_seconds": 86400,
+      "requests": 651,
+      "successful": 543,
+      "failures": 108,
+      "failure_rate": 0.1659,
+      "server_error_rate": 0.00154,
+      "requests_per_minute": 0.452,
+      "status_spread": {
+        "401": 27,
+        "200": 543,
+        "400": 75,
+        "404": 4,
+        "499": 1,
+        "500": 1
+      },
+      "failure_causes": [
+        {
+          "cause": "400 request body rejected by the engine",
+          "requests": 75,
+          "share": 0.6944
+        },
+        {
+          "cause": "401 missing or invalid customer key",
+          "requests": 27,
+          "share": 0.25
+        },
+        {
+          "cause": "404 unknown route",
+          "requests": 4,
+          "share": 0.037
+        },
+        {
+          "cause": "499 client disconnected before response",
+          "requests": 1,
+          "share": 0.0093
+        },
+        {
+          "cause": "500 upstream/server error",
+          "requests": 1,
+          "share": 0.0093
+        }
+      ],
+      "per_customer": [
+        {
+          "customer": "sudarshan",
+          "requests": 571,
+          "failures": 68,
+          "failure_rate": 0.1191,
+          "throttled": 0,
+          "distinct_ips": 2,
+          "in_bytes": 110776445,
+          "out_bytes": 25895264,
+          "p50_s": 66.295,
+          "p95_s": 399.924
+        },
+        {
+          "customer": "evalbot",
+          "requests": 42,
+          "failures": 13,
+          "failure_rate": 0.3095,
+          "throttled": 0,
+          "distinct_ips": 1,
+          "in_bytes": 17747,
+          "out_bytes": 184106,
+          "p50_s": 19.904,
+          "p95_s": 66.409
+        },
+        {
+          "customer": "(unauthenticated)",
+          "requests": 27,
+          "failures": 27,
+          "failure_rate": 1.0,
+          "throttled": 0,
+          "distinct_ips": 7,
+          "in_bytes": 2599,
+          "out_bytes": 2160,
+          "p50_s": null,
+          "p95_s": null
+        },
+        {
+          "customer": "ops",
+          "requests": 7,
+          "failures": 0,
+          "failure_rate": 0.0,
+          "throttled": 0,
+          "distinct_ips": 2,
+          "in_bytes": 911,
+          "out_bytes": 5888,
+          "p50_s": 0.002,
+          "p95_s": 2.115
+        },
+        {
+          "customer": "lioxi",
+          "requests": 2,
+          "failures": 0,
+          "failure_rate": 0.0,
+          "throttled": 0,
+          "distinct_ips": 1,
+          "in_bytes": 164,
+          "out_bytes": 1798,
+          "p50_s": 0.0,
+          "p95_s": 0.002
+        },
+        {
+          "customer": "shaurya",
+          "requests": 2,
+          "failures": 0,
+          "failure_rate": 0.0,
+          "throttled": 0,
+          "distinct_ips": 1,
+          "in_bytes": 168,
+          "out_bytes": 1798,
+          "p50_s": 0.0,
+          "p95_s": 0.001
+        }
+      ],
+      "per_path": [
+        {
+          "path": "/v1/chat/completions",
+          "requests": 606,
+          "failures": 83,
+          "failure_rate": 0.137
+        },
+        {
+          "path": "/v1/models",
+          "requests": 37,
+          "failures": 23,
+          "failure_rate": 0.6216
+        },
+        {
+          "path": "/v1/completions",
+          "requests": 3,
+          "failures": 0,
+          "failure_rate": 0.0
+        },
+        {
+          "path": "/v1/responses",
+          "requests": 3,
+          "failures": 0,
+          "failure_rate": 0.0
+        },
+        {
+          "path": "/v1/embeddings",
+          "requests": 2,
+          "failures": 2,
+          "failure_rate": 1.0
+        }
+      ],
+      "edge_latency_s": {
+        "p50": 57.892,
+        "p90": 300.723,
+        "p95": 372.766,
+        "p99": 1043.903
+      },
+      "bytes_in": 110798034,
+      "bytes_out": 26091014,
+      "partial": true,
+      "actual_coverage_seconds": 3487.0
+    }
+  },
+  "engine": {
+    "note": "counters are cumulative since the last engine start, not windowed",
+    "engine_start_utc": "2026-09-19T14:15:47Z",
+    "requests_success_total": 494.0,
+    "prompt_tokens_total": 15692633.0,
+    "generation_tokens_total": 329003.0,
+    "prompt_tokens_cached_total": 7820672.0,
+    "cached_token_share": 0.4984,
+    "prefix_cache_queries_total": 15910650.0,
+    "prefix_cache_hits_total": 7839104.0,
+    "prefix_cache_hit_rate": 0.4927,
+    "preemptions_total": 90.0,
+    "requests_running": 0.0,
+    "requests_waiting": 0.0,
+    "kv_cache_usage_perc": 0.0,
+    "tool_call_parser_invocations_total": 81356.0,
+    "latency_seconds": {
+      "ttft": {
+        "0.5": 2.3326,
+        "0.9": 60.4068,
+        "0.95": 82.7097,
+        "0.99": 144.5419
+      },
+      "tpot": {
+        "0.5": 0.2298,
+        "0.9": 0.4067,
+        "0.95": 0.523,
+        "0.99": 0.7206
+      },
+      "itl": {
+        "0.5": 0.179,
+        "0.9": 0.5932,
+        "0.95": 0.7191,
+        "0.99": 0.9471
+      },
+      "e2e": {
+        "0.5": 46.2069,
+        "0.9": 237.9759,
+        "0.95": 432.8276,
+        "0.99": 1129.6
+      },
+      "queue": {
+        "0.5": 0.2219,
+        "0.9": 38.2857,
+        "0.95": 73.6875,
+        "0.99": 110.7375
+      },
+      "prefill": {
+        "0.5": 1.1016,
+        "0.9": 6.619,
+        "0.95": 9.5595,
+        "0.99": 19.2167
+      },
+      "decode": {
+        "0.5": 33.25,
+        "0.9": 231.8769,
+        "0.95": 420.4444,
+        "0.99": 1129.6
+      }
+    },
+    "request_shape": {
+      "prompt_tokens": {
+        "0.5": 6836.7347,
+        "0.9": 88250.0,
+        "0.95": 146363.6364,
+        "0.99": 200000.0
+      },
+      "generation_tokens": {
+        "0.5": 162.9921,
+        "0.9": 926.0,
+        "0.95": 1692.0,
+        "0.99": 4412.0
+      },
+      "client_max_tokens": {
+        "0.5": 7937.5,
+        "0.9": 30883.7209,
+        "0.95": 48116.2791,
+        "0.99": 200000.0
+      },
+      "iteration_tokens": {
+        "0.5": 25.4058,
+        "0.9": 59.7977,
+        "0.95": 63.364,
+        "0.99": 16194.9538
+      }
+    }
+  },
+  "caveats": [
+    "Access-log coverage is 3487 s; any window longer than that is partial, not a full-period measurement."
+  ]
+}
