@@ -152,25 +152,37 @@ stage_preflight() {
   command -v docker >/dev/null || die "docker not found"
   command -v python3 >/dev/null || die "python3 not found"
 
-  local gpus
-  gpus=$(rocm-smi --showid 2>/dev/null | grep -c '^GPU\[' || echo 0)
-  if (( gpus != REQUIRED_GPUS )); then
-    die "found ${gpus} GPUs, this design requires ${REQUIRED_GPUS}.
+  # The host probes below are Linux- and ROCm-specific. A dry run is meant to
+  # be inspectable from a laptop, so there it reports what it WOULD check
+  # rather than failing on a machine that was never going to serve this model.
+  if (( DRY_RUN )); then
+    log "would require ${REQUIRED_GPUS} GPUs, >=${REQUIRED_RAM_GB} GB RAM, "\
+        ">=${REQUIRED_DISK_GB} GB free on $(dirname "${SCRATCH}")"
+  else
+    # grep -c prints 0 and exits 1 when nothing matches, so `|| echo 0` would
+    # append a second zero and corrupt the arithmetic below.
+    local gpus=0
+    command -v rocm-smi >/dev/null \
+      || die "rocm-smi not found; this is not an Instinct host"
+    gpus=$(rocm-smi --showid 2>/dev/null | grep -c '^GPU\[' || true)
+    if (( ${gpus:-0} != REQUIRED_GPUS )); then
+      die "found ${gpus:-0} GPUs, this design requires ${REQUIRED_GPUS}.
        1.5 TB of MXFP4 weights do not fit in fewer."
+    fi
+    ok "${gpus} GPUs visible"
+
+    local ram_gb
+    ram_gb=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
+    (( ram_gb >= REQUIRED_RAM_GB )) \
+      || warn "host RAM ${ram_gb} GB is below ${REQUIRED_RAM_GB} GB; A3 host tiering will be limited"
+    ok "host RAM ${ram_gb} GB"
+
+    local disk_gb
+    disk_gb=$(df -BG --output=avail "$(dirname "${SCRATCH}")" | tail -1 | tr -dc '0-9')
+    (( ${disk_gb:-0} >= REQUIRED_DISK_GB )) \
+      || die "only ${disk_gb:-0} GB free; the weights alone are ~1.5 TB"
+    ok "${disk_gb} GB free"
   fi
-  ok "${gpus} GPUs visible"
-
-  local ram_gb
-  ram_gb=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
-  (( ram_gb >= REQUIRED_RAM_GB )) \
-    || warn "host RAM ${ram_gb} GB is below ${REQUIRED_RAM_GB} GB; A3 host tiering will be limited"
-  ok "host RAM ${ram_gb} GB"
-
-  local disk_gb
-  disk_gb=$(df -BG --output=avail "$(dirname "${SCRATCH}")" | tail -1 | tr -dc '0-9')
-  (( disk_gb >= REQUIRED_DISK_GB )) \
-    || die "only ${disk_gb} GB free; the weights alone are ~1.5 TB"
-  ok "${disk_gb} GB free"
 
   # The capacity model is the source of every admission number below. If its
   # own hypothesis test fails, the model does not describe this box and the
@@ -592,7 +604,11 @@ stage_edge() {
     "DOMAIN is unset. The edge needs a hostname for TLS and for the
        default-deny block:  DOMAIN=cflox.store ./deploy.sh edge"
 
-  command -v nginx >/dev/null || die "nginx not installed"
+  if (( DRY_RUN )); then
+    log "would require nginx on PATH"
+  else
+    command -v nginx >/dev/null || die "nginx not installed"
+  fi
 
   run mkdir -p /var/log/k3
   render_key_map
