@@ -22,7 +22,11 @@ probe/        static engine capability probes
   base.py         EngineProbe template, ProbeResult
   engines.py      VllmProbe, SglangProbe; add an engine by subclassing
   renderers.py    TextRenderer / JsonRenderer
-tests/        unittest suite over the model
+traffic/      what the surviving edge logs say about production
+  records.py      value types for a traffic window
+  sources.py      TrafficSource protocol; ProdStatsSource
+  analysis.py     Check registry; add a check by subclassing
+tests/        unittest suite over all three
 ```
 
 ## Run
@@ -36,6 +40,9 @@ python3 -m redesign.capacity --json
 python3 -m redesign.probe                    # both engines
 python3 -m redesign.probe --engine sglang    # exit 0 = an A1 flag is present
 
+python3 -m redesign.traffic                  # exit 1 = a CRITICAL finding
+python3 -m redesign.traffic --window 24h
+
 python3 -m unittest discover -s redesign/tests -t .
 ```
 
@@ -47,8 +54,7 @@ No third-party dependencies. Python 3.10+.
 |---|---|---|---|
 | **Z0** | `capacity/` | done | Is the KV pool 8× deflated by MLA-under-TP replication? |
 | **Z2** | `probe/`, `Z2-FINDINGS.md` | done | Is de-duplication available for a hybrid KDA+MLA model on ROCm, and on which engine? |
-| **Z1** | — | todo | Are clients sending per-key `cache_salt`, which drives the hit rate to 0% by design? |
-| **Z3** | — | todo | Capture and replay the real production request distribution. |
+| **Z1/Z3** | `traffic/` | partial | What do the surviving edge logs actually show? Blocked on whether more log data exists. |
 | **Z4** | — | todo | Tenancy + backpressure layers, against a mock endpoint. |
 | **Z5** | — | todo | Extend the correctness gate to catch quantized-KV silent garbage. |
 | **Z6** | — | todo | Pre-registered GPU session definitions. |
@@ -84,6 +90,30 @@ This retired GPU session G0 before the box booted.
 See [`Z2-FINDINGS.md`](Z2-FINDINGS.md). This inverted the original sequencing:
 the engine decision is not a follow-on to the capacity work, it *is* the
 capacity work.
+
+### Z1/Z3 — the traffic evidence is weaker than the plan assumed
+
+`python3 -m redesign.traffic` over the only production log data that survived
+the teardown (58 minutes, 651 requests):
+
+| Finding | Severity |
+|---|---|
+| **75 requests (11.5% of all traffic) rejected with 400** — 69% of all failures | CRITICAL |
+| Edge duration p50 **58 s**, p95 373 s, p99 1,044 s | CRITICAL |
+| **92% of billable requests from one key** (2 IPs) | WARN |
+| 58 minutes of coverage against a 24-hour target | WARN |
+| `/v1/models` 62% failure, `/v1/embeddings` 100% failure | WARN |
+
+Two consequences for the design:
+
+- **The eviction-spiral narrative is unproven.** A 6–13% prefix hit rate across
+  one developer's ad-hoc prompts is the expected result, not a pathology. The
+  85% shared-prefix premise cannot be evaluated from this window at all, so a
+  third hypothesis now sits alongside eviction and `cache_salt`. The replication
+  finding is unaffected — it is arithmetic over the engine's reported pool.
+- **D2 is promoted to the top of the register.** An 11.5% rejection rate is
+  larger, more certain and cheaper to fix than anything in Tier A, and needs no
+  GPU: a per-class `max_tokens` clamp at the tenancy layer.
 
 ## Caveat on the inputs
 

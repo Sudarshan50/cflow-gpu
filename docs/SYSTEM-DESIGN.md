@@ -153,12 +153,49 @@ at concurrency 64** and plateauing, versus sharded KV sustaining concurrency 512
 at 82% KV. The production numbers above sit exactly on that wall. This is a
 known, named failure mode of MLA-under-TP, not a tuning deficiency.
 
-### 3.2 The one alternative not yet excluded
+### 3.2 Three hypotheses for the hit-rate collapse, none yet excluded
 
-`K3-DEPLOYMENT.md` §11.2 confirms that clients sending a per-API-key
-`cache_salt` drive the hit rate to **0% by design**. If high-volume customers
-salt per key, the hit-rate collapse is a client bug and no amount of tuning
-addresses it. **This is a zero-GPU check and it gates everything** — see Z1.
+1. **Eviction spiral** (FINDINGS.md §1). The long-context tail evicts the shared
+   prefix. Fixed by tuning.
+2. **Client `cache_salt`.** `K3-DEPLOYMENT.md` §11.2 confirms per-API-key salting
+   drives the hit rate to **0% by design**. Fixed by a conversation, not a config.
+3. **The sample is one developer.** Added by Z1/Z3. See below.
+
+### 3.3 The traffic evidence is much weaker than it looked
+
+`redesign/traffic` over the surviving `prod_stats.json` — the only production
+log data that outlived the teardown:
+
+| | |
+|---|---|
+| Coverage | **58 minutes**, 651 requests, 10.85 req/min |
+| Top client share | **92% of billable requests** from one key (`sudarshan`, 2 IPs) |
+| Distinct billable clients | 5, of which 3 sent fewer than 10 requests |
+| Failure rate | **16.6%** |
+| Edge duration | p50 **58 s**, p95 **373 s**, p99 **1,044 s** |
+
+This is not a production load; it is largely one person's testing. Two
+consequences the design must absorb:
+
+- **Hypothesis 3 is now the most likely.** A 6–13% prefix hit rate on one
+  developer's varied ad-hoc prompts is the expected result, not a pathology.
+  The 85% shared-prefix premise cannot be evaluated from this window at all.
+  **The eviction-spiral narrative is unproven**, and the case for tuning against
+  it rests on a sample too small to carry it.
+- **Every concurrency number in §2.3 is provisional.** The replication finding
+  is unaffected — it is arithmetic over the engine's own reported pool — but the
+  ~30k mean prompt, and therefore the admission sizing, needs Z3.
+
+### 3.4 The defect nobody costed: 11.5% of requests are rejected
+
+**75 of 651 requests returned 400** — 69% of all failures and 11.5% of all
+traffic. `config.yaml` already records the cause: clients send a fixed
+`max_tokens`, the engine reserves `prompt + max_tokens` against one window, and
+oversized requests are refused.
+
+This is larger, more certain, and cheaper to fix than anything in Tier A. It
+needs no GPU: a per-class `max_tokens` clamp at the tenancy layer. **Register
+item D2 is promoted to the top of the programme.**
 
 ---
 
@@ -268,8 +305,8 @@ not concurrency — and is the fallback if A1 proves unavailable.
 
 | # | Optimization | Effect |
 |---|---|---|
+| **D2** | Per-class `max_tokens` clamp | **Recovers 11.5% of all traffic currently rejected with 400** (§3.4). Highest-certainty item on the register, zero GPU. Do this first. |
 | **D1** | Route P1 short chat off-box | Removes request-count churn at zero HBM cost |
-| **D2** | Per-class `max_tokens` clamp | Cuts reservation pressure and spurious 400s |
 | **D3** | Distillation on a priority-3 loopback lane, off-peak | Near-free throughput; never touches customer quota |
 
 ### Tier E — Operational
