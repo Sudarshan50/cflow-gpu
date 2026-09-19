@@ -257,8 +257,9 @@ snapshot_download('${MODEL_REPO}', max_workers=16, resume_download=True)
 # unknown flag is discovered after the weights load -- several minutes of paid
 # GPU per mistake.
 validate_profile_flags() {
-  local -a required=(tp_size max_model_len max_running_requests)
+  local -a required=(tp_size max_model_len max_running_requests max_num_batched_tokens)
   (( ENABLE_DP_ATTENTION )) && required+=(enable_dp_attention dp_size)
+  (( ENABLE_PRIORITY_SCHEDULING )) && required+=(enable_priority_scheduling)
   [[ "${KV_CACHE_DTYPE}" != auto ]] && required+=(kv_cache_dtype)
   (( ENABLE_HIERARCHICAL_CACHE )) && required+=(enable_hierarchical_cache hicache_ratio)
 
@@ -325,12 +326,18 @@ build_engine_args() {
     --port "${ENGINE_PORT}"
     --max-model-len "${MAX_MODEL_LEN}"
     --max-running-requests "${ceiling}"
+    --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}"
     --long-prefill-token-threshold "${LONG_PREFILL_THRESHOLD}"
     --reasoning-parser kimi_k3
     --tool-call-parser kimi_k3
   )
   if (( ENABLE_DP_ATTENTION )); then
     ENGINE_ARGS+=(--enable-dp-attention --dp-size "${DP_SIZE}")
+  fi
+  # B2. Without this the scheduler is FCFS and every class assignment the
+  # gateway makes is decoration.
+  if (( ENABLE_PRIORITY_SCHEDULING )); then
+    ENGINE_ARGS+=(--enable-priority-scheduling)
   fi
   if [[ "${KV_CACHE_DTYPE}" != auto ]]; then
     ENGINE_ARGS+=(--kv-cache-dtype "${KV_CACHE_DTYPE}")
@@ -389,6 +396,16 @@ stage_gateway() {
   # defect: requests rejected because prompt + max_tokens exceeds the window.
   run install -d -m 0750 "${TRACE_DIR}"
 
+  # The ceiling must match the engine's, or the two layers disagree about how
+  # much work is in flight.
+  local ceiling="${MAX_RUNNING_REQUESTS}"
+  [[ -n "$ceiling" ]] || ceiling=$( cd "${REPO_ROOT}" && derive_admission_ceiling )
+
+  # Only stamp a priority if the engine was actually launched able to honour
+  # one. Sending a field the scheduler ignores looks like the class design is
+  # working when it is not.
+  local send_priority="${ENABLE_PRIORITY_SCHEDULING:-0}"
+
   local unit=/etc/systemd/system/k3-gateway.service
   local rendered
   rendered=$(cat <<UNIT
@@ -403,6 +420,8 @@ WorkingDirectory=${REPO_ROOT}
 Environment=PYTHONUNBUFFERED=1
 Environment=K3_ENGINE_URL=http://${ENGINE_HOST}:${ENGINE_PORT}
 Environment=K3_MAX_MODEL_LEN=${MAX_MODEL_LEN}
+Environment=K3_ADMISSION_CEILING=${ceiling}
+Environment=K3_SEND_PRIORITY=${send_priority}
 Environment=K3_TRACE_PATH=${TRACE_DIR}/requests.jsonl
 ExecStart=/usr/bin/python3 -m redesign.gateway.server --port ${GATEWAY_PORT}
 Restart=always
