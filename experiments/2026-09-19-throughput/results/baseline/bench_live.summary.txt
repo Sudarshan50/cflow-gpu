@@ -1,0 +1,26 @@
+Successful requests:                     200       
+Benchmark duration (s):                  212.50    
+Total input tokens:                      5166427   
+Total generated tokens:                  122059    
+Request throughput (req/s):              0.94      
+Output token throughput (tok/s):         574.39    
+Mean TTFT (ms):                          62981.23  
+Median TTFT (ms):                        61523.73  
+P50 TTFT (ms):                           61523.73  
+P90 TTFT (ms):                           112092.51 
+P99 TTFT (ms):                           159880.90 
+Mean TPOT (ms):                          213.20    
+Median TPOT (ms):                        199.63    
+P50 TPOT (ms):                           199.63    
+P90 TPOT (ms):                           333.60    
+P99 TPOT (ms):                           394.96    
+Mean ITL (ms):                           198.26    
+Median ITL (ms):                         79.44     
+P50 ITL (ms):                            79.44     
+P90 ITL (ms):                            630.10    
+P99 ITL (ms):                            682.42    
+Mean E2EL (ms):                          183778.30 
+Median E2EL (ms):                        186085.35 
+P50 E2EL (ms):                           186085.35 
+P90 E2EL (ms):                           200609.10 
+P99 E2EL (ms):                           205586.39 

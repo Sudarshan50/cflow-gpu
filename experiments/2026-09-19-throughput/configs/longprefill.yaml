@@ -1,0 +1,114 @@
+# vLLM serve args for Kimi-K3 on 8x MI355X.
+# Consumed by: vllm serve moonshotai/Kimi-K3 --config /hf/config.yaml
+# Precedence: CLI > this file > defaults (vllm/utils/argparse_utils.py:494)
+#
+# FOOTGUN: never write `some-flag: false`. The parser emits NOTHING for a
+# false boolean (argparse_utils.py:571-573), silently giving you the flag's
+# DEFAULT rather than the disabled state. Use the positive form of the
+# negative flag instead, e.g. `no-enable-log-requests: true`.
+
+# First name is what /v1/models and every response's `model` field report.
+# `kimi-k3` stays as an alias because live customer integrations still send it;
+# dropping it 404s them. Remove only once no client uses the old name.
+served-model-name:
+  - FW-Kimi-K3
+  - kimi-k3
+trust-remote-code: true
+
+# Parallelism
+tensor-parallel-size: 8
+enable-expert-parallel: true
+
+# Loading
+load-format: fastsafetensors
+
+# Shapes. 262,144 = 256k context. The model's native ceiling is
+# text_config.max_position_embeddings = 1,048,576, so the limit here is this
+# box's VRAM, not the model.
+#
+# Why 256k and not less: clients send a FIXED max_tokens (Foundry-style SDKs
+# default to 128,000), and vLLM reserves prompt+max_tokens against one shared
+# window (renderers/params.py: max_input_tokens = max_total_tokens -
+# max_output_tokens). So usable prompt = max-model-len - 128,000. At 131,072
+# that left only 3,072 prompt tokens and 400'd nearly every agentic request.
+# 256k leaves 134,144. 204,800 was rejected as too tight (76,800, no margin).
+#
+# Raising this is NOT the same as reserving it. KV pages are allocated on
+# DEMAND, so a 20k-token request costs 20k of KV whether the cap is 12.8k or
+# 1M. max-model-len only bounds the WORST case, i.e. how much cache a single
+# request may monopolise. Measured KV pool at 0.92 is 2,295,266 tokens:
+#   128k -> 17.5x   256k -> 8.76x   384k -> 5.8x   512k -> 4.4x
+#
+# HISTORY: 262,144 was tried once at gpu-memory-utilization 0.96 and killed the
+# engine mid-prefill at num_computed_tokens=186,624 with EngineDeadError. It
+# was NOT KV exhaustion - kv_cache_usage was 0.084 at death. The cause was VRAM
+# headroom: dmesg logged `svm_range_evict_svm_bo_worker` (amdgpu evicting
+# buffer objects) at the exact second of the crash, because 0.96 left only
+# ~11.5 GiB/GPU spare and attending over 186k tokens of KV needs more than that.
+#
+# 256k is now VERIFIED at 0.92 (~16.6 GiB/GPU spare), 2026-09-18:
+#   single prefill 249,696 tok                     PASS, 0 new evictions
+#   4 x 212k concurrent, unique prompts (848k)     PASS, 95s, 0 evictions
+#   6 x 191k concurrent, unique prompts (1.15M)    PASS, 59s, 0 evictions,
+#                                                  0 preemptions
+#   >262,144 request                               clean 400, engine survives
+# Prompts were randomised specifically to defeat prefix caching; an earlier
+# run with identical prompts finished in 6s and proved nothing.
+#
+# The safety property that matters is unchanged: an oversized request gets a
+# clean 400 rather than taking the engine down. Raising this FURTHER means
+# re-testing the new shape under CONCURRENCY with unique prompts, and watching
+# dmesg for svm_range_evict_svm_bo_worker - not just a single-request probe.
+max-model-len: 262144
+max-num-seqs: 512
+# Chunked prefill caps activation, so a 256k prompt is processed in 8,192-token
+# chunks (32 of them) and does NOT raise the 4.06 GiB activation peak. Kept at
+# 8192 because that is the value the 2.50M TPM result was measured with.
+max-num-batched-tokens: 8192
+
+# Memory. Back to 0.92 after 0.96 crashed the engine on a long prefill (see
+# max-model-len above). 0.96 did work as an allocation - it grew KV from
+# 1,696,278 to 2,732,926 tokens - but the ~11.5 GiB/GPU it left behind is not
+# enough working room for long-context attention. 0.92 leaves ~16.6 GiB/GPU
+# (measured via rocm-smi 2026-09-18 with the engine loaded and serving; an
+# earlier note here claimed ~23 GiB, which was wrong in the dangerous
+# direction). That 16.6 GiB is what makes 256k survivable - see max-model-len.
+# DO NOT raise this without testing a >186k-token prompt.
+gpu-memory-utilization: 0.92
+
+# NOTE: no `block-size` here on purpose. Setting 128 was a no-op - this is a
+# hybrid model and vLLM overrides it: "Setting attention block size to 768
+# tokens to ensure that attention page size is >= mamba page size"
+# (interface.py:911), then pads the mamba page by 8.68% to match. 69 of the 93
+# layers are KDA (linear attention, constant state per sequence); only the 24
+# full_attn_layers hold length-proportional KV. That hybrid split is why 256k
+# is affordable at all.
+
+# Prefix caching - load-bearing. 85% shared prefix => ~3x throughput.
+enable-prefix-caching: true
+prefix-match-unit: 128
+
+# Emits usage.prompt_tokens_details.cached_tokens, which gateways need to bill
+# cached tokens. Read only at startup: takes effect on the next restart.
+enable-prompt-tokens-details: true
+
+# FULL_DECODE_ONLY frees ~11.7 GiB of cudagraph memory into KV
+# (1,169,808 -> 1,696,278 tokens). torch.compile does NOT engage on K3.
+compilation-config:
+  cudagraph_mode: FULL_DECODE_ONLY
+  custom_ops:
+    - "+fused_rms_norm_gated"
+
+# Parsers
+reasoning-parser: kimi_k3
+tool-call-parser: kimi_k3
+enable-auto-tool-choice: true
+
+# Logging - positive form of the negative flag (see FOOTGUN above)
+no-enable-log-requests: true
+
+host: 127.0.0.1
+port: 8001
+
+# --- A/B variant: longprefill ---
+long-prefill-token-threshold: 32768

@@ -1,0 +1,1 @@
+bench-window prefix hit rate: 70.9%  (queries=5166427 hits=3664896)

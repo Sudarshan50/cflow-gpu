@@ -1,0 +1,9 @@
+# Benchmark evidence and transcripts ARE tracked under experiments/, overriding
+# the root rules that exclude `results/` and `*.jsonl`. Those root rules exist
+# to keep working scratch out of the repo; here the files are the deliverable.
+#
+# Safety condition: everything committed under this tree must pass redact.py,
+# which strips live credentials and customer IPs and exits non-zero if any
+# survive. Env files are never committed -- they carry the live API key.
+!results/
+!*.jsonl
