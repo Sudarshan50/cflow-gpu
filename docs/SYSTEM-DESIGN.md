@@ -29,9 +29,15 @@ This design therefore attacks, in strict order:
 3. **Compute** — kernel and engine efficiency, which only becomes the binding
    constraint *after* 1 and 2.
 
-The engine question (vLLM vs SGLang) is deliberately third. It is a real
-question with a probable answer (SGLang), but it cannot be measured while the
-capacity defect and the over-admission defect dominate the signal.
+The engine question (vLLM vs SGLang) was originally sequenced third, on the
+reasoning that kernel efficiency only binds after capacity is fixed. **Z2
+overturned that.** Static verification of both upstreams found that KV
+de-duplication for a hybrid KDA+MLA model on ROCm is available on SGLang and
+not on vLLM — so the 8× lever and the engine choice are *the same decision*.
+See `redesign/Z2-FINDINGS.md` and §8 D2.
+
+Admission right-sizing still goes first. It is free, engine-independent, and
+without it the migration cannot be measured.
 
 ---
 
@@ -232,8 +238,8 @@ assuming ~5 min per engine restart (measured startup: 262 s).
 
 | # | Optimization | Mechanism | Effect | Confidence | GPU |
 |---|---|---|---|---|---|
-| **A1** | MLA KV de-duplication — DCP (vLLM `-dcp`) or DP attention (SGLang) | Shards the latent KV along the token dimension instead of replicating per rank | **up to ~8× pool** | Mechanism certain. **Availability for K3's hybrid KDA+MLA arch on ROCm is UNVERIFIED and may not exist on either engine.** | ~4 h |
-| **A2** | fp8 KV cache (`e4m3`) | Halves MLA bytes/token | **~2× pool** | SGLang documents support; vLLM ROCm tracker (#50682) lists it in-progress, not working on MI355X. Silent-garbage risk. | ~3 h |
+| **A1** | MLA KV de-duplication — DP attention (SGLang) or DCP (vLLM) | Partitions the KV latent by sequence (DP attention) or by token (DCP) instead of replicating it per rank | **up to ~8× pool** | **Z2: available on SGLang, NOT on vLLM.** vLLM's DCP lists hybrid-model integration as future work, has no ROCm support, and K3 itself is "underway". SGLang documents `--enable-dp-attention` in its K3 recipe and has merged hybrid DP-attention fixes. | ~4 h |
+| **A2** | fp8 KV cache (`e4m3`) | Halves MLA bytes/token | **~2× pool** | **Z2: available on SGLang, blocked on vLLM.** vLLM ROCm tracker #50682 lists fp8 KV as in-progress and not working on MI355X. Silent-garbage risk either way. | ~3 h |
 | **A3** | CPU DRAM L2 tier | Offloads evicted blocks to host RAM | ~2× *addressable* (not resident) | Medium. Connector instability above 64 GB documented (vLLM #52656). | ~6 h |
 
 A1 and A2 multiply. If both land, KV stops binding entirely and the design's
@@ -305,21 +311,34 @@ failure mode to a system with zero redundancy. Every k8s-native serving control
 plane prices its value in cross-replica behaviour that is unavailable here.
 **Tripwire:** adopt k8s the same week a second node is committed.
 
-### D2 · Engine: measure capacity before choosing
-Not because the engine does not matter — because **kernel efficiency only becomes
-the binding constraint after capacity is fixed.** Current throughput is 233k–544k
-TPM against a 1.49M ceiling measured on the engine already running. That gap is
-capacity and waste; no engine change closes it. Swapping now carries the same
-over-admission into SGLang (`--max-running-requests` over-admits just as
-happily) and reads the noise as an engine difference.
+### D2 · Engine: migrate to SGLang, because that is where the capacity is
+**Revised by Z2.** The original reasoning — engine third, because kernel
+efficiency only binds after capacity is fixed — was correct about *kernels* and
+wrong about *what the engine choice buys*. A1 is not a kernel optimisation. It
+is a parallelism-layout capability, it is worth ~8× the KV pool, and it exists
+on only one of the two engines for this model on this platform.
 
-**Expected outcome: SGLang** — on the strength of fp8 KV availability and its
-unified KDA+MLA allocation (vLLM sizes the two pools separately at startup,
-forcing a workload-composition guess), *not* on the kernel deltas. The
-distinction matters: a capacity-based case tells you exactly what to re-check
-when vLLM's ROCm PRs merge.
-**Tripwire:** if G2/G3 show vLLM can de-duplicate KV and run fp8 KV, the case
-largely evaporates.
+| | vLLM on ROCm | SGLang on ROCm |
+|---|---|---|
+| A1 de-duplication | **no** — hybrid integration is future work, ROCm unmentioned, K3 "underway" | **yes** — `--enable-dp-attention` in the K3 recipe; hybrid DP-attention bugs fixed upstream |
+| A2 fp8 KV | **no** — in-progress per issue #50682 | **yes** — `fp8_e4m3` documented |
+| A3 host tier | yes (connector caveats) | yes (HiCache) |
+| Ceiling | ~2× addressable | ~16× resident, ~31× addressable |
+
+So the migration *is* the capacity programme, not a follow-on to it. The kernel
+deltas SGLang is usually sold on (A8W4 over A4W4 at 1.2%; KDA fused decode at
+8.9% of decode-layer time) remain nearly irrelevant to a 97.7%-input workload —
+they are simply not the reason to move.
+
+**Tripwire:** if `redesign/probe` reports `enable_dp_attention` absent from the
+pinned image, or G2 shows the pool unchanged with it enabled, this decision
+reverts and the plan becomes A3-only on vLLM at a ~2× ceiling.
+
+**Migration hazards** are catalogued in `redesign/Z2-FINDINGS.md` §3. The two
+that will bite first: `--max-running-requests` is floor-divided by `dp_size`
+(and can produce a server that refuses everything, looking like a migration
+failure rather than a config error), and DP attention cannot currently be
+combined with prefill CP (`--cp-strategy interleave` asserts `dp_size == 1`).
 
 ### D3 · Gateway: keep nginx, add tenancy, build backpressure
 nginx is not the weak layer — it terminates TLS, default-denies, enforces
@@ -403,11 +422,19 @@ is an extension, not a rewrite.
 
 | Session | Question | Pass/fail | Est. |
 |---|---|---|---|
-| **G0** | Is KV replicated? Does reported capacity match `27 KB × N` or `216 KB × N`? | Arithmetic resolves | ~1 h |
-| **G1** | Does right-sized `max-num-seqs` drive preemptions to zero? | Preemption rate 0 across a full replay | ~2 h |
-| **G2** | Is A1 collectable on this engine and model? | Pool grows materially, gate passes | ~4 h |
-| **G3** | fp8 KV: does the pool double **and** the gate pass? | Both, or revert | ~3 h |
-| **G4** | Engine A/B on the real trace, capacity already fixed | Pre-registered metric table | ~6 h |
+| **G1** | Does right-sized `max-num-seqs` drive preemptions to zero on the current vLLM stack? | Preemption rate 0 across a full replay | ~2 h |
+| **G2** | Does SGLang + `--enable-dp-attention` de-duplicate the KV pool for K3? | Reported pool grows toward ~19M tokens; correctness gate passes; **P0 TTFT p95 does not regress** | ~4 h |
+| **G3** | Does fp8 KV double the pool again without corrupting output? | Both, or revert | ~3 h |
+| **G4** | Is a host KV tier still needed after A1+A2? | Only run if G2/G3 leave KV binding | ~6 h |
+
+**G0 is retired.** The replication question it was booked to answer was settled
+offline by `redesign/capacity/hypothesis.py` — 3.2% error under the replicated
+hypothesis versus 726% under the de-duplicated one. That is one GPU session
+saved before the box booted.
+
+G2 carries the migration, so it is the session to over-prepare: the trace
+harness (Z3), the correctness gate extension (Z5) and the probe
+(`redesign/probe`) must all be green first.
 
 ### GPU cost discipline — non-negotiable
 

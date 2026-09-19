@@ -2,32 +2,60 @@
 
 Implementation of [`docs/SYSTEM-DESIGN.md`](../docs/SYSTEM-DESIGN.md).
 
-Everything here is built and validated **without a GPU**. The box costs money
-the moment it boots, so the rule for this directory is:
+Everything here runs **without a GPU**. The box costs money the moment it boots,
+so the rule for this directory is:
 
 > No GPU session without a pre-written question, a pre-written pass/fail, and a
 > rollback. "Boot it and see" is how GPU budgets disappear.
 
+## Layout
+
+```
+capacity/     KV capacity model -- the arithmetic the plan rests on
+  model.py        domain: Architecture, Parallelism, Precision, CapacityModel
+  deployment.py   sourced constants for this deployment
+  scenarios.py    optimisation scenarios; extend by appending to REGISTRY
+  hypothesis.py   replication hypothesis test
+  report.py       report assembly, no I/O
+  renderers.py    TextRenderer / JsonRenderer behind a Renderer protocol
+probe/        static engine capability probes
+  base.py         EngineProbe template, ProbeResult
+  engines.py      VllmProbe, SglangProbe; add an engine by subclassing
+  renderers.py    TextRenderer / JsonRenderer
+tests/        unittest suite over the model
+```
+
+## Run
+
+```bash
+python3 -m redesign.capacity                 # full report
+python3 -m redesign.capacity --sweep         # concurrency vs prompt length
+python3 -m redesign.capacity --verify        # hypothesis only; exit 0 = replicated
+python3 -m redesign.capacity --json
+
+python3 -m redesign.probe                    # both engines
+python3 -m redesign.probe --engine sglang    # exit 0 = an A1 flag is present
+
+python3 -m unittest discover -s redesign/tests -t .
+```
+
+No third-party dependencies. Python 3.10+.
+
 ## Phase Z — zero-GPU deliverables
 
-| ID | File | Status | What it answers |
+| ID | Where | Status | Answers |
 |---|---|---|---|
-| **Z0** | `capacity_model.py` | done | Is the KV pool 8× deflated by MLA-under-TP replication? |
-| **Z1** | `cache_salt_audit.py` | todo | Are clients sending per-key `cache_salt`, which drives the hit rate to 0% by design? |
-| **Z2** | `probe_dedup_support.py` | todo | Does DCP / DP-attention support a hybrid KDA+MLA model on ROCm *today*, on either engine? |
-| **Z3** | `trace/` | todo | Capture and replay the real production request distribution. |
-| **Z4** | `gateway/` | todo | Tenancy + backpressure layers, against a mock endpoint. |
-| **Z5** | `gate_kv_quant.py` | todo | Extend the correctness gate to catch quantized-KV silent garbage. |
-| **Z6** | `experiments/` | todo | Pre-registered GPU session definitions. |
+| **Z0** | `capacity/` | done | Is the KV pool 8× deflated by MLA-under-TP replication? |
+| **Z2** | `probe/`, `Z2-FINDINGS.md` | done | Is de-duplication available for a hybrid KDA+MLA model on ROCm, and on which engine? |
+| **Z1** | — | todo | Are clients sending per-key `cache_salt`, which drives the hit rate to 0% by design? |
+| **Z3** | — | todo | Capture and replay the real production request distribution. |
+| **Z4** | — | todo | Tenancy + backpressure layers, against a mock endpoint. |
+| **Z5** | — | todo | Extend the correctness gate to catch quantized-KV silent garbage. |
+| **Z6** | — | todo | Pre-registered GPU session definitions. |
 
-## Phase G — GPU sessions
+## Results so far
 
-Defined in `docs/SYSTEM-DESIGN.md` §11. Each is time-boxed to one question.
-Nothing in Phase G runs until the Phase Z item it depends on is green.
-
-## Z0 result
-
-`capacity_model.py` confirms the §2 finding offline:
+### Z0 — the pool is replicated, confirmed offline
 
 ```
 measured pool             2,295,266 tokens
@@ -36,34 +64,30 @@ predicted if DE-DUPED     18,952,040  (error 725.7%)
 VERDICT                   REPLICATED
 ```
 
-Cross-check: the model's sustainable concurrency at the observed mean prompt
-length is **78 sequences**; production steady state is 68–76 in system. The
-configured `max-num-seqs: 512` is **6.6×** that.
+The model's sustainable concurrency at the observed mean prompt length is **75
+sequences**; production steady state is 68–76 in system. Configured
+`max-num-seqs` is **512**, a 6.8× overcommit — which is where the 4–9/min
+preemptions come from.
 
-Headroom if the replication is fixed:
-
-| Scenario | Pool | vs today | max-num-seqs |
+| Scenario | Resident | vs today | Admission ceiling |
 |---|---|---|---|
-| Today (TP8 replicated, bf16) | 2.37M | 1.0× | 78 |
-| + fp8 KV (A2) | 4.74M | 2.0× | 155 |
-| + 512 GB CPU L2 tier (A3) | 4.68M addressable | 2.0× | 78 |
-| **+ KV de-duplication (A1)** | **18.95M** | **8.0×** | **591** |
-| + de-dup and fp8 (A1+A2) | 37.90M | 16.0× | 1111 |
+| Today (TP8 replicated, bf16) | 2.37M | 1.0× | 75 |
+| A2 fp8 KV | 4.74M | 2.0× | 149 |
+| A3 512 GB host tier | 2.37M (+2.31M tier) | 2.0× | 75 |
+| **A1 KV de-duplication** | **18.95M** | **8.0×** | **570** |
+| A1+A2 | 37.90M | 16.0× | 1074 |
 
-Run it:
+This retired GPU session G0 before the box booted.
 
-```bash
-python3 redesign/capacity_model.py            # full report
-python3 redesign/capacity_model.py --sweep    # concurrency vs prompt length
-python3 redesign/capacity_model.py --verify   # hypothesis test only, exit 0 = replicated
-python3 redesign/capacity_model.py --json     # machine-readable
-```
+### Z2 — A1 is available on SGLang, not on vLLM
 
-No dependencies. Python 3.9+.
+See [`Z2-FINDINGS.md`](Z2-FINDINGS.md). This inverted the original sequencing:
+the engine decision is not a follow-on to the capacity work, it *is* the
+capacity work.
 
 ## Caveat on the inputs
 
-`PROMPT_DISTRIBUTION` in `capacity_model.py` comes from a **229-request
-sample**. Every sizing number derived from it is provisional until Z3 replaces
-it with a real week of traffic. The replication finding itself does not depend
-on the distribution — only the concurrency numbers do.
+`OBSERVED_PROMPTS` in `capacity/deployment.py` comes from a **229-request
+sample**. Every concurrency number derived from it is provisional until Z3
+replaces it with a real week of traffic. The replication finding itself does not
+depend on the distribution.
