@@ -26,7 +26,14 @@ traffic/      what the surviving edge logs say about production
   records.py      value types for a traffic window
   sources.py      TrafficSource protocol; ProdStatsSource
   analysis.py     Check registry; add a check by subclassing
-tests/        unittest suite over all three
+gateway/      tenancy, backpressure and trace capture
+  models.py       RequestEnvelope, Decision, EngineSnapshot, ClampResult
+  classification.py  ordered ClassRule registry, first match wins
+  clamping.py     TokenClamp -- register item D2
+  backpressure.py CircuitBreaker, ClassBudget; fails open
+  policy.py       composes the above into one Decision
+  capture.py      TraceSink protocol; JsonlSink, MemorySink
+tests/        unittest suite over all four
 ```
 
 ## Run
@@ -43,6 +50,9 @@ python3 -m redesign.probe --engine sglang    # exit 0 = an A1 flag is present
 python3 -m redesign.traffic                  # exit 1 = a CRITICAL finding
 python3 -m redesign.traffic --window 24h
 
+python3 -m redesign.gateway                  # dry-run the policy, no engine
+python3 -m redesign.gateway --ceiling 96
+
 python3 -m unittest discover -s redesign/tests -t .
 ```
 
@@ -54,8 +64,8 @@ No third-party dependencies. Python 3.10+.
 |---|---|---|---|
 | **Z0** | `capacity/` | done | Is the KV pool 8× deflated by MLA-under-TP replication? |
 | **Z2** | `probe/`, `Z2-FINDINGS.md` | done | Is de-duplication available for a hybrid KDA+MLA model on ROCm, and on which engine? |
-| **Z1/Z3** | `traffic/` | partial | What do the surviving edge logs actually show? Blocked on whether more log data exists. |
-| **Z4** | — | todo | Tenancy + backpressure layers, against a mock endpoint. |
+| **Z1/Z3** | `traffic/` | done | What do the surviving edge logs show? (No further log data exists — it died with the box.) |
+| **Z4** | `gateway/` | done | Classification, `max_tokens` clamp, backpressure, trace capture. Carries Z3's capture too. |
 | **Z5** | — | todo | Extend the correctness gate to catch quantized-KV silent garbage. |
 | **Z6** | — | todo | Pre-registered GPU session definitions. |
 
@@ -114,6 +124,35 @@ Two consequences for the design:
 - **D2 is promoted to the top of the register.** An 11.5% rejection rate is
   larger, more certain and cheaper to fix than anything in Tier A, and needs no
   GPU: a per-class `max_tokens` clamp at the tenancy layer.
+
+### Z4 — the clamp recovers ~7 of the 11.5 points, not all of them
+
+`python3 -m redesign.gateway` dry-runs the policy against the observed prompt
+distribution with the fixed `max_tokens` Foundry-style SDKs send:
+
+```
+engine rejects today, unguarded          70    7.0%
+rescued by the clamp                     70    7.0%
+observed production rejection rate            11.5%
+NOT explained by this cause                    4.5%
+```
+
+The clamp recovers everything it can address. The residual ~4.5 points have a
+cause `prod_stats.json` cannot identify — it records the status code, not the
+engine's error body. The gateway's error taxonomy will name it on first boot.
+
+## Planning changes after the teardown
+
+The box was destroyed with **no usable snapshot**, and the logs went with it.
+
+- **First boot is a full rebuild**, ~1 hour plus a 1.5 TB weight pull. Snapshot
+  immediately after the first successful build, before experimenting.
+- **Build SGLang directly.** With nothing to preserve, standing up vLLM only to
+  tune it and migrate would spend a rebuild on a stack already decided against.
+  **G1 folds into G2.**
+- **Capture starts at first boot.** `gateway/capture.py` records request shapes
+  — never content, customer labels hashed — so the distribution every admission
+  number depends on gets rebuilt from day one.
 
 ## Caveat on the inputs
 

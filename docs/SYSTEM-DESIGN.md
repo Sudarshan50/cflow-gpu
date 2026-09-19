@@ -197,6 +197,14 @@ This is larger, more certain, and cheaper to fix than anything in Tier A. It
 needs no GPU: a per-class `max_tokens` clamp at the tenancy layer. **Register
 item D2 is promoted to the top of the programme.**
 
+**But it does not explain all of it.** Dry-running the clamp against the
+observed prompt distribution (`python3 -m redesign.gateway`) shows the
+fixed-`max_tokens` reservation accounts for **~7 points of the 11.5%**, with the
+clamp recovering all of those. The remaining ~4.5 points have a cause the
+surviving logs do not identify — `prod_stats.json` records only the status code,
+not the engine's error body. The gateway's error taxonomy is what will name it
+on first boot. **Do not claim D2 recovers 11.5%.**
+
 ---
 
 ## 4. Architecture
@@ -305,7 +313,7 @@ not concurrency — and is the fallback if A1 proves unavailable.
 
 | # | Optimization | Effect |
 |---|---|---|
-| **D2** | Per-class `max_tokens` clamp | **Recovers 11.5% of all traffic currently rejected with 400** (§3.4). Highest-certainty item on the register, zero GPU. Do this first. |
+| **D2** | Per-class `max_tokens` clamp | **Recovers ~7 points of the 11.5% rejection rate** (§3.4). Highest-certainty item on the register, zero GPU. Do this first. |
 | **D1** | Route P1 short chat off-box | Removes request-count churn at zero HBM cost |
 | **D3** | Distillation on a priority-3 loopback lane, off-peak | Near-free throughput; never touches customer quota |
 
@@ -448,10 +456,25 @@ is an extension, not a rewrite.
 
 | ID | Deliverable | Why it precedes GPU |
 |---|---|---|
-| **Z1** | `cache_salt` audit from existing logs | May end the investigation. Costs nothing. |
+> **Revised 2026-09-20.** The droplet was destroyed with no usable snapshot and
+> the production logs did not survive. Three consequences:
+>
+> 1. **The first boot is a full rebuild** — ~1 hour plus a 1.5 TB weight pull —
+>    not a 5-minute snapshot restore. Session economics change accordingly:
+>    snapshot immediately after the first successful build, before experimenting.
+> 2. **Build SGLang directly; skip vLLM entirely.** With nothing to preserve,
+>    standing up vLLM only to right-size `max-num-seqs` and then migrate would
+>    spend a full rebuild on a stack we have already decided to leave. B1 was
+>    never vLLM-specific — `--max-running-requests` is the same lesson.
+>    **G1 folds into G2.**
+> 3. **Z3 folds into Z4.** With no logs, the trace must be captured on first
+>    boot, and the tenancy layer already sees every request. The gateway is the
+>    instrument.
+
+| **Z1** | `cache_salt` audit — deferred, no logs survive | Becomes a first-boot check rather than an offline one. |
 | **Z2** | Static source verification: does DCP / DP-attention support a hybrid KDA+MLA model on ROCm today? | **Determines whether this is an 8× redesign or a 2× tuning exercise.** Pure code reading. Precedent: `validate.py` / `envprobe.py` caught the AITER rename statically before it cost a campaign. |
-| **Z3** | Trace capture + replay harness | No engine A/B is meaningful without the real prompt distribution, prefix reuse, tool calls and concurrency. |
-| **Z4** | Tenancy + backpressure layers against a mock endpoint | Entirely vendor- and model-agnostic. |
+| **Z3** | Trace capture — **folded into Z4** | No engine comparison is meaningful without the real prompt distribution, prefix reuse, tool calls and concurrency. With the logs gone, capture starts at first boot. |
+| **Z4** | Tenancy + backpressure + capture, against a mock endpoint | Entirely vendor- and model-agnostic. Carries D2, the top register item. |
 | **Z5** | Correctness gate extension for quantized-KV output quality | fp8/4-bit KV fails as *silent garbage* — the class of bug a throughput benchmark reports as success. |
 | **Z6** | Pre-registered experiment definitions | Every GPU session gets a question, variants, metric, pass/fail and rollback, written in advance. |
 
@@ -459,19 +482,21 @@ is an extension, not a rewrite.
 
 | Session | Question | Pass/fail | Est. |
 |---|---|---|---|
-| **G1** | Does right-sized `max-num-seqs` drive preemptions to zero on the current vLLM stack? | Preemption rate 0 across a full replay | ~2 h |
-| **G2** | Does SGLang + `--enable-dp-attention` de-duplicate the KV pool for K3? | Reported pool grows toward ~19M tokens; correctness gate passes; **P0 TTFT p95 does not regress** | ~4 h |
+| **G-build** | Does the fresh SGLang stack stand up and serve? | Engine loads, gate baseline recorded, **snapshot taken before anything else** | ~2 h + weight pull |
+| **G2** | Does `--enable-dp-attention` de-duplicate the KV pool for K3, and does right-sized `--max-running-requests` hold preemptions at zero? | Reported pool grows toward ~19M tokens; preemptions 0; correctness gate passes; **P0 TTFT p95 does not regress** | ~4 h |
 | **G3** | Does fp8 KV double the pool again without corrupting output? | Both, or revert | ~3 h |
 | **G4** | Is a host KV tier still needed after A1+A2? | Only run if G2/G3 leave KV binding | ~6 h |
 
-**G0 is retired.** The replication question it was booked to answer was settled
-offline by `redesign/capacity/hypothesis.py` — 3.2% error under the replicated
-hypothesis versus 726% under the de-duplicated one. That is one GPU session
-saved before the box booted.
+**G0 and G1 are retired.** G0's question — is the pool replicated — was settled
+offline by `redesign/capacity/hypothesis.py` at 3.2% error versus 726% for the
+alternative. G1 disappeared with the decision to build fresh on SGLang. Two
+sessions saved before the box booted.
 
-G2 carries the migration, so it is the session to over-prepare: the trace
-harness (Z3), the correctness gate extension (Z5) and the probe
-(`redesign/probe`) must all be green first.
+G2 carries the migration, so it is the session to over-prepare: the capture
+layer (Z4), the correctness gate extension (Z5) and the probe
+(`redesign/probe`) must all be green first. Run `redesign/probe` inside the
+pinned SGLang MI35x image during G-build, before booking G2 — if
+`enable_dp_attention` is absent, G2 should not be booked at all.
 
 ### GPU cost discipline — non-negotiable
 
