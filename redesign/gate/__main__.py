@@ -58,7 +58,12 @@ def render(results: list[CheckResult], elapsed: float) -> str:
 
     failures = [r for r in results if not r.passed]
     lines.append("-" * WIDTH)
-    if failures:
+    if not results:
+        lines.append("  GATE FAIL   no checks ran")
+        lines.append("")
+        lines.append("  A gate that runs nothing proves nothing. Exiting non-zero")
+        lines.append("  rather than licensing a deploy on an empty result set.")
+    elif failures:
         lines.append(f"  GATE FAIL   {len(failures)}/{len(results)} checks failed "
                      f"in {elapsed:.1f}s")
         lines.append("")
@@ -108,9 +113,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--api-key")
     parser.add_argument("--tier", type=int, action="append", choices=[1, 2, 3],
                         help="repeatable; default is all tiers")
-    parser.add_argument("--long-context", type=int, nargs="*", default=[32_000, 128_000],
+    parser.add_argument("--long-context", type=int, nargs="+", default=[32_000, 128_000],
                         help="context sizes for tier 3, in tokens")
     parser.add_argument("--baseline", type=Path, help="write results here")
+    parser.add_argument("--rebaseline", action="store_true",
+                        help="overwrite an existing baseline (refused otherwise)")
     parser.add_argument("--compare", type=Path, help="compare against a recorded run")
     args = parser.parse_args(argv)
 
@@ -124,7 +131,13 @@ def main(argv: list[str] | None = None) -> int:
 
     print(render(results, elapsed))
 
-    if args.baseline:
+    if args.baseline and args.baseline.exists() and not args.rebaseline:
+        # Overwriting the golden record with results from a different engine
+        # makes every later --compare pass against garbage, silently. That
+        # defeats the only mechanism that catches quantised-KV silent garbage.
+        print(f"\n  baseline {args.baseline} already exists; not overwriting."
+              f"\n  Pass --rebaseline to replace it deliberately.")
+    elif args.baseline:
         args.baseline.parent.mkdir(parents=True, exist_ok=True)
         args.baseline.write_text(json.dumps({
             "url": args.url,
@@ -133,7 +146,8 @@ def main(argv: list[str] | None = None) -> int:
         }, indent=2))
         print(f"\n  baseline written to {args.baseline}")
 
-    exit_code = 0 if all(r.passed for r in results) else 1
+    # `all([])` is True -- an empty selection must not report success.
+    exit_code = 0 if results and all(r.passed for r in results) else 1
     if args.compare:
         exit_code = max(exit_code, compare(results, args.compare))
     return exit_code

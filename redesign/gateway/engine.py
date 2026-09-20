@@ -38,6 +38,14 @@ PREEMPTION_METRICS = (
     "vllm:num_preemptions_total",
 )
 
+# Headers the proxy generates itself or that are connection-scoped. Echoing
+# these produces duplicate Date/Server, which RFC 9110 forbids.
+HOP_BY_HOP = frozenset({
+    "transfer-encoding", "connection", "content-length", "date", "server",
+    "keep-alive", "upgrade", "te", "trailer", "proxy-authenticate",
+    "proxy-authorization",
+})
+
 DEFAULT_TIMEOUT_SECONDS = 600
 HEALTH_TIMEOUT_SECONDS = 5
 
@@ -47,6 +55,10 @@ class ProxyResponse:
     status: int
     headers: list[tuple[str, str]]
     body: Iterator[bytes]
+
+    def close(self) -> None:
+        """Abandons the upstream response, releasing its connection."""
+        self.body.close()
 
 
 def parse_prometheus(text: str) -> dict[str, float]:
@@ -142,7 +154,7 @@ class EngineClient(EngineHealthSource):
         headers = [
             (key, value)
             for key, value in response.getheaders()
-            if key.lower() not in ("transfer-encoding", "connection", "content-length")
+            if key.lower() not in HOP_BY_HOP
         ]
         return ProxyResponse(
             status=response.status,
@@ -156,9 +168,15 @@ def _drain(
     response: http.client.HTTPResponse,
     stream: bool,
 ) -> Iterator[bytes]:
+    """Yields the response body.
+
+    `read(n)` blocks until it has all n bytes, which on a token stream means
+    withholding the first byte until ~8 KB of SSE has accumulated -- seconds of
+    invented TTFT. `read1(n)` returns as soon as any data is available.
+    """
     try:
         if stream:
-            while chunk := response.read(8192):
+            while chunk := response.read1(8192):
                 yield chunk
         else:
             yield response.read()

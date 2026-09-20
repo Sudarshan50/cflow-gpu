@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import time
+import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -34,6 +35,9 @@ from .tokens import TokenEstimator, build_estimator
 
 PROXIED_PATHS = ("/v1/chat/completions", "/v1/completions")
 MAX_BODY_BYTES = 64 * 1024 * 1024
+
+# Distinguishes "parse failed, error already sent" from a literal null body.
+_INVALID = object()
 
 BATCH_HEADER = "x-k3-batch"
 CUSTOMER_HEADER = "x-k3-customer"
@@ -76,6 +80,9 @@ def _coerce_int(value) -> int | None:
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    # Without this a client that declares a body and never sends it pins a
+    # thread forever.
+    timeout = 30
     service: GatewayService
 
     def log_message(self, fmt: str, *args) -> None:
@@ -96,7 +103,13 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         payload = self._read_payload()
-        if payload is None:
+        if payload is _INVALID:
+            return
+        if not isinstance(payload, dict):
+            self._json(400, {"error": {
+                "message": "body must be a JSON object",
+                "type": "invalid_request_error",
+            }})
             return
 
         started = time.monotonic()
@@ -133,7 +146,7 @@ class Handler(BaseHTTPRequestHandler):
             response = self.service.engine.proxy(
                 self.path, payload, stream=decision.envelope.streaming
             )
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
             self.service.registry.increment(
                 "engine_errors_total", traffic_class=decision.traffic_class
             )
@@ -152,18 +165,39 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
         first_byte: float | None = None
-        for chunk in response.body:
-            if not chunk:
-                continue
-            if first_byte is None:
-                first_byte = time.monotonic()
-                self.service.registry.observe_ttft(
-                    decision.traffic_class, first_byte - started
-                )
-            self.wfile.write(f"{len(chunk):X}\r\n".encode())
-            self.wfile.write(chunk)
-            self.wfile.write(b"\r\n")
-        self.wfile.write(b"0\r\n\r\n")
+        try:
+            for chunk in response.body:
+                if not chunk:
+                    continue
+                if first_byte is None:
+                    first_byte = time.monotonic()
+                    self.service.registry.observe_ttft(
+                        decision.traffic_class, first_byte - started
+                    )
+                self.wfile.write(f"{len(chunk):X}\r\n".encode())
+                self.wfile.write(chunk)
+                self.wfile.write(b"\r\n")
+            self.wfile.write(b"0\r\n\r\n")
+        except (BrokenPipeError, ConnectionResetError):
+            # Client hung up. Abandon the upstream response rather than draining
+            # it -- the slot is released by do_POST's finally.
+            self.service.registry.increment(
+                "client_disconnects_total", traffic_class=decision.traffic_class
+            )
+            self.close_connection = True
+            return
+        except (OSError, http.client.HTTPException) as exc:
+            # The stream died after headers were sent, so the status line is
+            # already 200. Omit the terminating chunk and drop the connection:
+            # a truncated body must not be framed as a complete one.
+            self.service.registry.increment(
+                "engine_errors_total", traffic_class=decision.traffic_class
+            )
+            self.log_error("upstream stream failed: %s", exc)
+            self.close_connection = True
+            return
+        finally:
+            response.close()
 
         self.service.registry.observe_total(
             decision.traffic_class, time.monotonic() - started
@@ -186,20 +220,32 @@ class Handler(BaseHTTPRequestHandler):
             extra_headers=headers,
         )
 
-    def _read_payload(self) -> dict | None:
-        length = int(self.headers.get("Content-Length") or 0)
+    def _read_payload(self):
+        """Returns the parsed body, or _INVALID having already sent an error.
+
+        A sentinel rather than None: a literal `null` body parses to None, and
+        conflating the two made do_POST return without writing any response,
+        hanging the client until its own timeout.
+        """
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._json(400, {"error": {
+                "message": "invalid Content-Length", "type": "invalid_request_error",
+            }})
+            return _INVALID
         if length <= 0 or length > MAX_BODY_BYTES:
             self._json(400, {"error": {
                 "message": "missing or oversized body", "type": "invalid_request_error",
             }})
-            return None
+            return _INVALID
         try:
             return json.loads(self.rfile.read(length))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             self._json(400, {"error": {
                 "message": f"invalid JSON: {exc}", "type": "invalid_request_error",
             }})
-            return None
+            return _INVALID
 
     def _json(self, status: int, body: dict, extra_headers: dict | None = None) -> None:
         self._raw(status, json.dumps(body).encode(), "application/json", extra_headers)

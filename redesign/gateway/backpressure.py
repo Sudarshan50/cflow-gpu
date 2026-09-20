@@ -11,6 +11,7 @@ Fails open. A broken breaker must degrade admission, never deny service.
 from __future__ import annotations
 
 import abc
+import threading
 from dataclasses import dataclass, field
 
 from .classification import TrafficClass
@@ -87,11 +88,17 @@ class CircuitBreaker:
 
 @dataclass
 class ClassBudget:
-    """Concurrency slots per class, as a share of a server-wide ceiling."""
+    """Concurrency slots per class, as a share of a server-wide ceiling.
+
+    Thread-safe. The server runs a thread per request, so an unguarded
+    read-modify-write here loses updates: a lost decrement is never recovered
+    and the class wedges at its limit permanently.
+    """
 
     ceiling: int
     shares: dict[str, float]
     _in_flight: dict[str, int] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def limit_for(self, traffic_class: TrafficClass) -> int:
         return int(self.ceiling * self.shares.get(traffic_class.name, 0.0))
@@ -103,16 +110,18 @@ class ClassBudget:
         limit = self.limit_for(traffic_class)
         if limit <= 0:
             return False
-        current = self.in_flight(traffic_class)
-        if current >= limit:
-            return False
-        self._in_flight[traffic_class.name] = current + 1
-        return True
+        with self._lock:
+            current = self._in_flight.get(traffic_class.name, 0)
+            if current >= limit:
+                return False
+            self._in_flight[traffic_class.name] = current + 1
+            return True
 
     def release(self, traffic_class: TrafficClass) -> None:
-        current = self.in_flight(traffic_class)
-        if current:
-            self._in_flight[traffic_class.name] = current - 1
+        with self._lock:
+            current = self._in_flight.get(traffic_class.name, 0)
+            if current:
+                self._in_flight[traffic_class.name] = current - 1
 
     @classmethod
     def from_classes(cls, ceiling: int, classes, offbox_configured: bool = False) -> "ClassBudget":

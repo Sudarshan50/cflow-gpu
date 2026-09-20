@@ -1,6 +1,10 @@
 # System Design v2 — Capacity-First Serving for Kimi-K3 on 8× MI355X
 
 **Status:** proposed, unimplemented. Written 2026-09-20.
+**AUDITED 2026-09-20** by four independent reviewers. Several quantitative
+claims below were found unsound and are corrected inline. Read
+[`redesign/AUDIT-2026-09-20.md`](../redesign/AUDIT-2026-09-20.md) before acting
+on any number in this document.
 **Supersedes:** nothing. This is a design layer *above* `K3-DEPLOYMENT.md`, which
 remains the authoritative record of what was measured on the box. Where this
 document and that one disagree on a *measurement*, that one wins. Where they
@@ -110,8 +114,22 @@ dimension. When `tp_size > num_kv_heads`, the cache is duplicated
 | TP size | **8** |
 | Cross-check: 27 KB × 8 | 216 KB/token vs 228 KB/token measured (5% gap = KDA amortised) |
 
-Two independent derivations agree. **This is the headline finding and G0 exists
-to confirm or refute it on the live box before anything is built on it.**
+**This is one derivation, not two — and its units do not match.** `488 GiB` is
+an 8-GPU aggregate; `2,295,266 tokens` is what a single *worker* reports.
+`RUNBOOK.md:154-156` shows `Available KV cache memory: 61.06 GiB` and the token
+count on adjacent lines of the same per-worker output, and 61.06 GiB ÷
+2,295,266 = **27.9 KiB/token per rank** — matching the documented 27 KiB
+directly. The factor of 8 was introduced by the unit mismatch.
+
+The "228 KB/token measured" cross-check is the same division rearranged
+(524e9 ÷ 2,295,266 = 228,296), so it corroborates nothing.
+
+**The conclusion survives on physics, not on this arithmetic:** MLA has one KV
+head, TP cannot shard it, and vLLM's DCP documentation states the latent KV is
+replicated in full across every TP rank. But the model fits only one of the
+three `(available KV, pool)` pairs in this repo — the others imply 44.3 and
+37.8 KiB/token — so **G0 is reinstated** and §2 should be read as an inference
+awaiting confirmation.
 
 ### 2.3 Consequences
 
@@ -123,10 +141,17 @@ to confirm or refute it on the live box before anything is built on it.**
   ~19M-token pool, 512 sequences at a 30k mean is roughly the right order. It is
   wrong *today* only because replication divided the pool by 8. This predicts
   the setting comes back up after A1.
-- **Sustainable concurrency today:** 524 GB ÷ (54 MB + 30k × 216 KB) ≈ **80
-  sequences**. Observed steady state is 46–51 running with 22–25 queued ≈ 73 in
-  system. The pool's real capacity is already asserting itself — through
-  preemption rather than through admission.
+- **Sustainable concurrency: WITHDRAWN.** This section previously derived ~75–80
+  sequences and called the agreement with production a cross-check. Three
+  problems, all found in audit:
+  1. The model has **no prefix-sharing term**, and `K3-DEPLOYMENT.md:526` says
+     the engine's own no-sharing estimate is "pessimistic by ~5× for this
+     workload. Ignore it."
+  2. `K3-DEPLOYMENT.md:39` records **427 concurrent requests sustained**.
+  3. The "≈73 in system" agreement was produced by adding *queued* requests,
+     which hold no KV. Against running-only (46–51) the model is ~60% high.
+
+  A prefix-sharing term is required before any admission number is quoted.
 
 ---
 
@@ -296,7 +321,7 @@ not concurrency — and is the fallback if A1 proves unavailable.
 | # | Optimization | Effect | Confidence | GPU |
 |---|---|---|---|---|
 | **B0** | `cache_salt` audit | Potentially the entire hit-rate collapse | High | **zero** |
-| **B1** | Right-size `max-num-seqs` | Eliminates preemption. At 97.7% input, a preemption discards completed *prefill* — the most expensive thing on the box. | High | ~1 h |
+| **B1** | Right-size `max-num-seqs` | **NUMBER WITHDRAWN.** The direction may hold — the box was preempting — but the model that produced "~75" has no prefix-sharing term, and `K3-DEPLOYMENT.md:39` records **427 concurrent sustained**. Acting on 75 risked a ~5× throughput cut. | **Low** | ~1 h |
 | **B2** | Priority scheduling + classes | Protects interactive TTFT | High | ~2 h |
 | **B3** | `long-prefill-token-threshold` | Caps the tail's scheduling share, breaking the eviction spiral | Medium-high | shared |
 
@@ -306,8 +331,8 @@ not concurrency — and is the fallback if A1 proves unavailable.
 |---|---|---|---|
 | **C1** | AITER flag contract (`VLLM_ROCM_USE_AITER_MOE_SITUV2_A8W4`) | Prevents a 2.06× decode regression presenting as an upgrade failure | Mandatory on any image change. Static-analysis result from `FINDINGS.md` §2. |
 | **C2** | `max-num-batched-tokens` re-tune | Plausibly 10–20% TTFT | Currently 8192, tuned against a 12.8k-prompt benchmark. Observed mean is ~30k. Almost certainly mis-sized. |
-| **C3** | A8W4 vs A4W4; KDA fused decode | ~1.2%; ~8.9% of decode-layer time | Real but decode-side, against a 2.3%-decode workload. Sub-1% end-to-end. |
-| **C4** | DSpark / speculative decoding | Likely negative | Verification tokens compete under load; this workload is high-batch and 97.7% input. Defer. |
+| **C3** | A8W4 vs A4W4; KDA fused decode | **Re-ranked upward.** Previously dismissed as "sub-1% end-to-end" using the *token* ratio. That is the right denominator for memory and the wrong one for latency: prefill p50 is **1.10 s** and decode p50 is **33.25 s**, so decode is ~**72% of end-to-end**. An 8.9% decode-layer gain is ~8.9% of 33 s. |
+| **C4** | DSpark / speculative decoding | Re-evaluate | The "97.7% input" dismissal used the same wrong denominator. The batch-size argument still stands; measure rather than assume. |
 
 ### Tier D — Traffic
 
@@ -483,7 +508,7 @@ is an extension, not a rewrite.
 | Session | Question | Pass/fail | Est. |
 |---|---|---|---|
 | **G-build** | Does the fresh SGLang stack stand up and serve? | Engine loads, gate baseline recorded, **snapshot taken before anything else** | ~2 h + weight pull |
-| **G2** | Does `--enable-dp-attention` de-duplicate the KV pool for K3, and does right-sized `--max-running-requests` hold preemptions at zero? | Reported pool grows toward ~19M tokens; preemptions 0; correctness gate passes; **P0 TTFT p95 does not regress** | ~4 h |
+| **G2** | Does `--enable-dp-attention` de-duplicate the KV pool for K3? | **AGGREGATE served tokens across all DP ranks**, or sustained concurrency × mean prompt — never the per-rank pool log line, which stays ~2.3M under DP attention and would record a correct 8× win as a failure. Plus: per-rank occupancy spread (DP attention concentrates the long tail on one rank), preemptions 0, gate passes, **P0 TTFT p95 does not regress** | ~4 h |
 | **G3** | Does fp8 KV double the pool again without corrupting output? | Both, or revert | ~3 h |
 | **G4** | Is a host KV tier still needed after A1+A2? | Only run if G2/G3 leave KV binding | ~6 h |
 

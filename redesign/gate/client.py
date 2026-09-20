@@ -79,11 +79,18 @@ class GateClient:
             body = json.loads(raw)
             choice = body["choices"][0]
             usage = body.get("usage", {})
-        except (json.JSONDecodeError, KeyError, IndexError) as exc:
+            # /v1/completions returns "text"; chat returns "message".content.
+            # Reading either outside this guard turns a malformed response into
+            # a crashed gate run instead of a failed check.
+            if "message" in choice:
+                text = choice["message"].get("content") or ""
+            else:
+                text = choice.get("text") or ""
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError, AttributeError) as exc:
             raise CompletionError(f"malformed response: {exc}") from exc
 
         return Completion(
-            text=choice["message"].get("content") or "",
+            text=text,
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
             finish_reason=choice.get("finish_reason", ""),

@@ -11,7 +11,7 @@ Exposes Prometheus text. Stdlib only; no client library.
 from __future__ import annotations
 
 import threading
-from bisect import insort
+from collections import deque
 from dataclasses import dataclass, field
 
 # Keeping every observation would grow without bound; keeping too few makes p95
@@ -23,18 +23,25 @@ QUANTILES = (0.5, 0.95, 0.99)
 
 @dataclass
 class LatencySeries:
-    samples: list[float] = field(default_factory=list)
+    """A bounded window in ARRIVAL order, sorted only at render time.
+
+    Keeping the list sorted and evicting index 0 would evict the smallest
+    sample rather than the oldest, turning the series into a running maximum:
+    a single incident pins p50 and p95 at the incident value forever.
+    """
+
+    samples: deque[float] = field(
+        default_factory=lambda: deque(maxlen=MAX_SAMPLES_PER_CLASS)
+    )
 
     def observe(self, seconds: float) -> None:
-        if len(self.samples) >= MAX_SAMPLES_PER_CLASS:
-            self.samples.pop(0)
-        insort(self.samples, seconds)
+        self.samples.append(seconds)
 
     def quantile(self, q: float) -> float | None:
         if not self.samples:
             return None
-        index = min(len(self.samples) - 1, int(q * len(self.samples)))
-        return self.samples[index]
+        ordered = sorted(self.samples)
+        return ordered[min(len(ordered) - 1, int(q * len(ordered)))]
 
 
 class Registry:
@@ -62,8 +69,8 @@ class Registry:
     def render(self) -> str:
         with self._lock:
             counters = dict(self._counters)
-            ttft = {k: list(v.samples) for k, v in self._ttft.items()}
-            total = {k: list(v.samples) for k, v in self._total.items()}
+            ttft = {k: sorted(v.samples) for k, v in self._ttft.items()}
+            total = {k: sorted(v.samples) for k, v in self._total.items()}
 
         lines: list[str] = []
         for (name, labels), value in sorted(counters.items()):
