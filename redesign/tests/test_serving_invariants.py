@@ -22,12 +22,16 @@ from redesign.gateway.policy import GatewayPolicy
 from redesign.gateway.server import GatewayService, Handler
 
 
-def fake_engine(status=200):
+def fake_engine(status=200, *, stream=False):
     response = Mock(spec=http.client.HTTPResponse)
     response.status = status
-    response.getheaders.return_value = [("Content-Type", "application/json")]
+    response.getheaders.return_value = [("Content-Type", "text/event-stream" if stream else "application/json")]
     response.read.return_value = b'{"choices":[]}'
-    response.read1.side_effect = [b"data: test\n\n", b""]
+    response.read1.side_effect = [
+        b'data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}\n\n'
+        b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
+        b'data: [DONE]\n\n', b"",
+    ]
     connection = Mock(spec=http.client.HTTPConnection)
     connection.getresponse.return_value = response
     engine = EngineClient("http://offline.invalid")
@@ -36,7 +40,7 @@ def fake_engine(status=200):
 
 
 def fake_handler(payload=None, status=200):
-    engine, connection, response = fake_engine(status)
+    engine, connection, response = fake_engine(status, stream=bool(payload and payload.get("stream")))
     budget = ClassBudget(2, {SHORT_CHAT.name: 0.5, INTERACTIVE.name: 0.5})
     policy = GatewayPolicy(
         Classifier(), TokenClamp(262_144), budget,
@@ -147,7 +151,8 @@ class PostAdmissionTest(unittest.TestCase):
     def test_other_postadmission_exceptions_release_slots(self):
         for stage in ("registry", "clamp", "proxy", "header", "ttft", "total"):
             with self.subTest(stage=stage):
-                handler, budget, connection, response = fake_handler()
+                payload = {"prompt": "hi", "stream": True} if stage == "ttft" else None
+                handler, budget, connection, response = fake_handler(payload)
                 error = RuntimeError(stage)
                 if stage == "registry":
                     target, attribute = handler.service.registry, "increment"
@@ -163,8 +168,14 @@ class PostAdmissionTest(unittest.TestCase):
                     patch(target, side_effect=error) if attribute is None
                     else patch.object(target, attribute, side_effect=error)
                 )
-                with context, self.assertRaisesRegex(RuntimeError, stage):
+                with context as injected, self.assertRaisesRegex(RuntimeError, stage):
                     handler.do_POST()
+                if stage == "ttft":
+                    injected.assert_called_once()
+                    self.assertEqual(injected.call_args.args[0], SHORT_CHAT.name)
+                    self.assertGreaterEqual(injected.call_args.args[1], 0)
+                    self.assertEqual(response.read1.call_count, 2)
+                    response.read.assert_not_called()
                 self.assertEqual(budget.in_flight(SHORT_CHAT), 0)
                 self.assertTrue(budget.try_acquire(SHORT_CHAT))
                 if stage not in ("registry", "clamp"):
@@ -343,6 +354,7 @@ class MetricsAndStatusTest(unittest.TestCase):
                     f'{name}{{model_name="test"}} 0.96\n'
                     "vllm:num_requests_running 74\n"
                     "vllm:num_requests_waiting 21\n"
+                    "vllm:num_preemptions_total 0\n"
                 ).encode()
                 snapshot = engine.snapshot()
                 self.assertEqual(snapshot.kv_usage, 0.96)
@@ -411,7 +423,7 @@ class TokenAliasesAndReplicasTest(unittest.TestCase):
             ({"max_tokens": 16, "max_completion_tokens": 1_000}, 1_000),
             ({"max_tokens": 16, "max_completion_tokens": None}, 16),
             ({"max_tokens": 128_000, "max_completion_tokens": 128_000}, SHORT_CHAT.max_output_tokens),
-            ({}, SHORT_CHAT.max_output_tokens),
+            ({}, SHORT_CHAT.default_output_tokens),
         ):
             with self.subTest(aliases=aliases):
                 payload = {"prompt": "hi", **aliases}

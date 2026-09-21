@@ -1,14 +1,4 @@
-"""Bounds max_tokens so the engine does not reject the request.
-
-Register item D2, and the largest single defect in the observed traffic: 75 of
-651 requests (11.5%) returned 400 because the engine reserves
-prompt + max_tokens against one shared window, and clients send a fixed
-max_tokens regardless of prompt length.
-
-Clamping is not a workaround. The reservation is real, so a request asking for
-more output than the window can hold was never servable; the only question is
-whether the caller learns that as a 400 or as a shorter completion.
-"""
+"""Choose defaults or preserve explicit output budgets within class/context bounds."""
 
 from __future__ import annotations
 
@@ -27,8 +17,36 @@ PROMPT_TOO_LONG = "prompt_exceeds_window"
 # special tokens the gateway does not see.
 RESERVE_TOKENS = 256
 
-# Below this, a completion is not worth serving; reject rather than truncate.
+# Do not truncate a larger budget below this. Explicit smaller budgets that
+# fit are still useful (e.g. max_tokens=1) and must not require 64 free tokens.
 MIN_VIABLE_OUTPUT_TOKENS = 64
+
+
+class InvalidTokenLimit(ValueError):
+    """Invalid caller limits must become HTTP 400, never an implicit default."""
+
+
+def _validate_limit(value: object, field: str) -> None:
+    # Match responses_bridge's strict positive-integer validation; bool is not
+    # a token count even though isinstance(True, int) is true in Python.
+    if value is not None and (type(value) is not int or value <= 0):
+        raise InvalidTokenLimit(f"{field}: must be a positive integer")
+
+
+def validate_token_limits(payload: dict) -> None:
+    for field in ("max_completion_tokens", "max_tokens", "max_output_tokens"):
+        _validate_limit(payload.get(field), field)
+
+
+def requested_output_tokens(payload: dict) -> int | None:
+    """Read canonical Chat limits at this hop, after any Responses conversion.
+
+    vLLM's modern alias wins. Validate both aliases before selecting so an
+    invalid value cannot disappear into the default/fallback path.
+    """
+    validate_token_limits(payload)
+    modern = payload.get("max_completion_tokens")
+    return modern if modern is not None else payload.get("max_tokens")
 
 
 @dataclass(frozen=True)
@@ -52,29 +70,33 @@ class TokenClamp:
         requested: int | None,
         traffic_class: TrafficClass,
     ) -> ClampResult:
+        _validate_limit(requested, "max_tokens")
         exceeded = self.exceeds_window(prompt_tokens, requested)
         available = self.available_for_output(prompt_tokens)
-        if available < self.min_viable_output_tokens:
+        default = traffic_class.default_output_tokens
+        if default is None:
+            default = traffic_class.max_output_tokens
+        target = default if requested is None else requested
+        minimum = min(self.min_viable_output_tokens, target, traffic_class.max_output_tokens)
+        if available < minimum:
             return ClampResult(
                 granted=0,
                 requested=requested,
                 reason=PROMPT_TOO_LONG,
                 exceeded_window=exceeded,
+                default_output_tokens=default,
             )
 
-        if requested is None:
-            granted = min(traffic_class.max_output_tokens, available)
-            reason = APPLIED_DEFAULT
-        elif requested <= traffic_class.max_output_tokens and requested <= available:
-            granted, reason = requested, UNCHANGED
-        elif traffic_class.max_output_tokens <= available:
-            granted, reason = traffic_class.max_output_tokens, CLASS_CEILING
+        granted = min(target, traffic_class.max_output_tokens, available)
+        if granted < target:
+            reason = CLASS_CEILING if traffic_class.max_output_tokens <= available else CONTEXT_WINDOW
         else:
-            granted, reason = available, CONTEXT_WINDOW
+            reason = APPLIED_DEFAULT if requested is None else UNCHANGED
 
         return ClampResult(
             granted=granted,
             requested=requested,
             reason=reason,
             exceeded_window=exceeded,
+            default_output_tokens=default,
         )

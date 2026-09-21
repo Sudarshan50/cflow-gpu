@@ -161,10 +161,8 @@ class TokenLimitPrecedenceTest(unittest.TestCase):
             ({"max_tokens": 1000, "max_completion_tokens": 16}, 16),
             ({"max_tokens": 16, "max_completion_tokens": 1000}, 1000),
             ({"max_tokens": 16, "max_completion_tokens": None}, 16),
-            ({"max_tokens": 16, "max_completion_tokens": 0}, 16),
-            ({"max_tokens": 16, "max_completion_tokens": "1000"}, 16),
             ({"max_tokens": 128_000, "max_completion_tokens": 128_000}, 4096),
-            ({}, 4096),
+            ({}, 1024),
         ):
             with self.subTest(aliases=aliases):
                 data = chat(**aliases)
@@ -179,7 +177,32 @@ class TokenLimitPrecedenceTest(unittest.TestCase):
                     self.assertEqual(data["max_completion_tokens"], expected)
                 if before.requested_max_tokens is not None:
                     self.assertLessEqual(after.requested_max_tokens, before.requested_max_tokens)
-                self.assertEqual(policy.apply(data, data["model"]), decision)
+                repeated = policy.apply(data, data["model"])
+                self.assertEqual(repeated.granted_max_tokens, decision.granted_max_tokens)
+                self.assertEqual(repeated.traffic_class, decision.traffic_class)
+                self.assertEqual(repeated.model, decision.model)
+                # Grants are idempotent; diagnostics describe each invocation's
+                # actual input, not a reconstructed original caller budget.
+                self.assertEqual(repeated.requested_max_tokens, expected)
+                self.assertEqual(repeated.clamp_reason, "unchanged")
+                self.assertFalse(repeated.default_applied)
+
+    def test_invalid_aliases_are_rejected_instead_of_falling_back(self):
+        from redesign.gateway.clamping import InvalidTokenLimit
+        from redesign.gateway.server import GatewayService
+        from redesign.tenancy.policy import TenancyPolicy
+        estimator = SimpleNamespace(estimate=lambda payload: 32)
+        policy = TenancyPolicy(estimator=estimator)
+        service = SimpleNamespace(estimator=estimator, batch_customers=frozenset())
+        for value in (0, -1, True, False, "1000", 1.5):
+            for field, other in (("max_completion_tokens", "max_tokens"), ("max_tokens", "max_completion_tokens")):
+                with self.subTest(field=field, value=value):
+                    data = chat(**{field: value, other: 16})
+                    with self.assertRaisesRegex(InvalidTokenLimit, field):
+                        policy.apply(data, data["model"])
+                    with self.assertRaisesRegex(InvalidTokenLimit, field):
+                        GatewayService.envelope(service, data, {}, "/v1/chat/completions")
+                    self.assertEqual(data[field], value)
 
 
 @unittest.skipUnless(importlib.util.find_spec("litellm"), "requires installed proxy LiteLLM")
@@ -191,6 +214,14 @@ class InstalledLiteLLMTest(unittest.IsolatedAsyncioTestCase):
         from litellm.caching.caching import Cache
         from litellm.proxy import proxy_server
         from redesign.tenancy.callback import K3TenancyCallback
+        # Router instances register bound methods in these process-global lists.
+        # Isolate and restore all of them, not just litellm.callbacks, so the
+        # full suite cannot retain old Routers/callbacks or hit MAX_CALLBACKS.
+        for name in ("input_callback", "success_callback", "failure_callback", "service_callback",
+                     "_async_input_callback", "_async_success_callback", "_async_failure_callback"):
+            context = patch.object(litellm, name, [])
+            context.start()
+            self.addCleanup(context.stop)
         self.litellm = litellm
         self.callback = K3TenancyCallback(team_pool_ids=frozenset(), cache_mode="static")
         self.general_settings = {"always_include_stream_usage": True}
@@ -412,6 +443,92 @@ class InstalledLiteLLMTest(unittest.IsolatedAsyncioTestCase):
                 if name in body:
                     self.assertEqual(body[name], expected)
 
+    async def test_chat_portal_alias_is_canonical_before_policy_and_cache(self):
+        for payload in (chat(max_output_tokens=16), chat(max_tokens=16),
+                        chat(max_tokens=2000, max_output_tokens=16)):
+            await self.complete(payload)
+        self.assertEqual(len(self.bodies), 1, "equivalent effective Chat limits must share a key")
+        await self.complete(chat(max_output_tokens=16, max_completion_tokens=1000))
+        self.assertEqual(len(self.bodies), 2)
+        self.assertEqual(self.bodies[0]["max_tokens"], 16)
+        self.assertEqual(self.bodies[1]["max_completion_tokens"], 1000)
+        self.assertEqual(self.bodies[1]["max_tokens"], 1000)
+        for body in self.bodies:
+            self.assertNotIn("max_output_tokens", body)
+
+    async def test_deployment_defaults_are_clamped_once_before_cache_lookup(self):
+        from redesign.gateway.media import normalize_payload
+        with patch.object(self.callback.policy, "apply", wraps=self.callback.policy.apply) as apply, \
+             patch("redesign.tenancy.callback.normalize_payload", wraps=normalize_payload) as normalize:
+            await self.complete(chat(), max_tokens=19)
+            await self.complete(chat(), max_tokens=19)
+            self.assertEqual(apply.call_count, 2, "one application per request, including a cache hit")
+            self.assertEqual(normalize.call_count, 2)
+        self.assertEqual(len(self.bodies), 1)
+        self.assertEqual(self.bodies[0]["max_tokens"], 19)
+        await self.complete(chat(), max_tokens=20)
+        self.assertEqual(len(self.bodies), 2, "the effective deployment limit is part of cache identity")
+
+    async def test_reserved_extra_body_overrides_cannot_bypass_chat_policy(self):
+        from fastapi import HTTPException
+        fields = {
+            "messages": [{"role": "user", "content": "x" * 1000}],
+            "tools": [{"type": "function", "function": {"name": "hidden"}}],
+            "max_tokens": 128000, "max_completion_tokens": 128000, "max_output_tokens": 128000,
+            "model": "other", "stream": True, "extra_body": {"max_tokens": 128000},
+        }
+        for field, value in fields.items():
+            with self.subTest(field=field):
+                data = await self.prepare(chat(max_tokens=16, extra_body={field: value}))
+                with self.assertRaises(HTTPException) as error:
+                    await self.callback.async_pre_call_deployment_hook(data, "acompletion")
+                self.assertEqual(error.exception.status_code, 400)
+        self.assertFalse(self.bodies)
+
+    async def test_deployment_media_failure_cannot_turn_static_context_cacheable(self):
+        from fastapi import HTTPException
+        from redesign.gateway.media import MediaValidationError
+        # An authenticated text request captures eligibility before Router adds
+        # media. A failed decode must reject before cache lookup or inference.
+        data = await self.prepare(chat())
+        data["messages"] = [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "bad-image"}},
+        ]}]
+        with patch.object(self.cache, "async_get_cache", side_effect=AssertionError("cache read")) as read, \
+             patch.object(self.cache, "get_cache", side_effect=AssertionError("cache read")) as sync_read, \
+             patch.object(self.cache, "async_add_cache", side_effect=AssertionError("cache write")) as write:
+            with self.assertRaises(HTTPException) as error:
+                await self.callback.async_pre_call_deployment_hook(data, "acompletion")
+            read.assert_not_called()
+            sync_read.assert_not_called()
+            write.assert_not_called()
+        self.assertEqual(error.exception.status_code, 400)
+        self.assertIsInstance(error.exception.__cause__, MediaValidationError)
+        self.assertIn("messages[0].content[0]", error.exception.detail)
+        self.assertNotIn("bad-image", error.exception.detail)
+        self.assertEqual(data["messages"][0]["content"][0]["type"], "image_url")
+        self.assertTrue(data["cache"]["no-store"])
+        self.assertTrue(data["cache"]["no-cache"])
+        self.assertFalse(data["caching"])
+        self.assertFalse(self.bodies)
+
+    async def test_missing_logging_context_at_real_sdk_barrier_fails_closed(self):
+        original = self.callback.async_pre_call_deployment_hook
+
+        async def without_logging(kwargs, call_type):
+            kwargs.pop("litellm_logging_obj", None)
+            return await original(kwargs, call_type)
+
+        with patch.object(self.callback, "async_pre_call_deployment_hook", side_effect=without_logging), \
+             patch.object(self.cache, "async_get_cache", side_effect=AssertionError("cache read")) as read, \
+             patch.object(self.cache, "async_add_cache", side_effect=AssertionError("cache write")) as write:
+            await self.complete(chat(max_output_tokens=16))
+            await self.complete(chat(max_output_tokens=16))
+            read.assert_not_called()
+            write.assert_not_called()
+        self.assertEqual(len(self.bodies), 2)
+        self.assertEqual(self.bodies[0]["max_tokens"], 16, "policy still runs without authenticated logging")
+
     async def test_stream_cache_and_inbound_preset_cannot_cross_tenants(self):
         first = await self.complete(chat(stream=True))
         second = await self.complete(chat(stream=True))
@@ -444,15 +561,50 @@ class InstalledLiteLLMTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.bodies[0]["stream_options"], {"include_usage": True})
         self.assertEqual(self.bodies[1]["stream_options"], {"include_usage": False})
 
-    async def test_media_failure_stays_uncacheable_and_gpu_salts_are_removed(self):
+    async def test_media_failure_returns_400_before_cache_or_provider(self):
         payload = chat(cache_salt="random", extra_body={"kv_cache_salt": "random", "priority": 99},
                        messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "bad-image"}}]}])
+        with patch.object(self.cache, "async_get_cache", side_effect=AssertionError("cache read")) as read, \
+             patch.object(self.cache, "get_cache", side_effect=AssertionError("cache read")) as sync_read, \
+             patch.object(self.cache, "async_add_cache", side_effect=AssertionError("cache write")) as write:
+            with self.assertRaises(Exception) as error:
+                await self.complete(payload)
+            self.assertEqual(getattr(error.exception, "status_code", None), 400, repr(error.exception))
+            read.assert_not_called()
+            sync_read.assert_not_called()
+            write.assert_not_called()
+        self.assertTrue(self.prepared[-1]["cache"]["no-store"])
+        self.assertFalse(self.bodies)
+
+    async def test_valid_media_stays_uncacheable_and_gpu_salts_are_removed(self):
+        import base64
+        import io
+        from PIL import Image
+        with Image.new("RGB", (2, 2), "blue") as image, io.BytesIO() as buffer:
+            image.save(buffer, format="PNG")
+            url = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+        payload = chat(cache_salt="random", extra_body={"kv_cache_salt": "random", "priority": 99},
+                       messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}}]}])
         data = await self.prepare(payload)
         await self.callback.async_pre_call_deployment_hook(data, "acompletion")
         self.assertTrue(data["cache"]["no-store"])
         self.assertNotIn("cache_salt", data)
         self.assertNotIn("kv_cache_salt", data["extra_body"])
         self.assertNotIn("priority", data["extra_body"])
+        self.assertEqual(data["messages"], payload["messages"])
+        with patch.object(self.cache, "async_get_cache", side_effect=AssertionError("cache read")) as read, \
+             patch.object(self.cache, "get_cache", side_effect=AssertionError("cache read")) as sync_read, \
+             patch.object(self.cache, "async_add_cache", side_effect=AssertionError("cache write")) as write:
+            await self.complete(payload)
+            await self.complete(payload)
+            read.assert_not_called()
+            sync_read.assert_not_called()
+            write.assert_not_called()
+        self.assertEqual(len(self.bodies), 2)
+        for body in self.bodies:
+            self.assertEqual(body["messages"], payload["messages"])
+            for name in ("cache_salt", "kv_cache_salt", "priority"):
+                self.assertNotIn(name, body)
 
     async def test_normalization_runs_off_loop_and_cancellation_does_not_mutate_request(self):
         started, release = threading.Event(), threading.Event()
@@ -464,7 +616,7 @@ class InstalledLiteLLMTest(unittest.IsolatedAsyncioTestCase):
             data["messages"][0]["content"] = "worker mutation"
 
         with patch("redesign.tenancy.callback.normalize_payload", side_effect=blocked):
-            task = asyncio.create_task(self.callback.async_pre_call_hook(None, None, original, "acompletion"))
+            task = asyncio.create_task(self.callback.async_pre_call_deployment_hook(original, "acompletion"))
             try:
                 for _ in range(100):
                     if started.is_set():

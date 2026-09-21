@@ -51,6 +51,7 @@ OFFBOX = """
       model: openai/{model}
       api_base: {url}
       api_key: {key}
+      use_chat_completions_api: true
 """
 
 SETTINGS = """

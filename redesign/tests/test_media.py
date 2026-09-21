@@ -1,11 +1,11 @@
-"""Multimodal parts must become vLLM-readable PNG data URIs or a text note."""
+"""Required image parts are validated and preserved; invalid media is an error."""
 
 from __future__ import annotations
 
 import base64
 import unittest
 
-from redesign.gateway.media import NOTE, PNG_MAGIC, normalize_payload
+from redesign.gateway.media import MediaValidationError, PNG_MAGIC, normalize_payload
 
 PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
@@ -28,15 +28,21 @@ class MediaNormalizeTest(unittest.TestCase):
         raw = base64.b64decode(part["image_url"]["url"].split(",", 1)[1])
         self.assertTrue(raw.startswith(PNG_MAGIC))
 
-    def test_garbage_image_becomes_a_text_note(self):
+    def test_garbage_image_is_an_explicit_part_indexed_error(self):
         junk = base64.b64encode(b"not-an-image").decode()
-        out = normalize_payload(_payload({
+        payload = _payload({
             "type": "image_url",
             "image_url": {"url": f"data:image/png;base64,{junk}"},
-        }))
-        parts = out["messages"][0]["content"]
+        })
+        with self.assertRaises(MediaValidationError) as caught:
+            normalize_payload(payload)
+        self.assertIsInstance(caught.exception, ValueError)
+        self.assertEqual(caught.exception.part_index, 1)
+        self.assertIn("messages[0].content[1]", str(caught.exception))
+        self.assertNotIn(junk, str(caught.exception))
+        parts = payload["messages"][0]["content"]
         self.assertEqual(parts[0]["text"], "hi")
-        self.assertEqual(parts[1], {"type": "text", "text": NOTE})
+        self.assertEqual(parts[1]["type"], "image_url")
 
     def test_anthropic_image_block_is_accepted(self):
         out = normalize_payload(_payload({

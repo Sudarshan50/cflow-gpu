@@ -2,8 +2,9 @@
 
 import copy
 import unittest
+from unittest.mock import patch
 
-from redesign.gateway.media import normalize_payload
+from redesign.gateway.media import normalize_controls, normalize_payload
 
 
 class ThinkingControlsTest(unittest.TestCase):
@@ -51,6 +52,49 @@ class ThinkingControlsTest(unittest.TestCase):
     def test_invalid_template_is_left_for_upstream_validation(self):
         self.assertEqual(normalize_payload({"reasoning_effort": "low", "chat_template_kwargs": "invalid"})[
             "chat_template_kwargs"], "invalid")
+
+    def test_controls_only_does_not_download_validate_or_rewrite_messages(self):
+        messages = [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "https://media.invalid/image?token=secret"}},
+            {"type": "input_audio", "input_audio": {"data": "invalid"}},
+        ]}]
+        payload = {
+            "reasoning_effort": "off", "messages": messages,
+            "tools": [{"type": "function", "function": {"name": name}} for name in ("z", "a")],
+        }
+        with patch("redesign.gateway.media._download", side_effect=AssertionError("download")), \
+             patch("redesign.gateway.media._validate_image", side_effect=AssertionError("decode")), \
+             patch("redesign.gateway.media._media_worker", side_effect=AssertionError("media worker")):
+            result = normalize_controls(payload)
+            self.assertIs(result, payload)
+            self.assertIs(result["messages"], messages)
+            self.assertIs(result["chat_template_kwargs"]["thinking"], False)
+            self.assertEqual([tool["function"]["name"] for tool in result["tools"]], ["a", "z"])
+            self.assertEqual(normalize_controls(copy.deepcopy(result)), result)
+
+    def test_controls_are_idempotent_across_effort_and_template_precedence(self):
+        for effort in (None, "none", "off", "low", "medium", "max", "invalid"):
+            for template in (
+                {}, {"thinking": True}, {"thinking": False}, {"enable_thinking": False},
+                {"thinking_effort": "max"}, {"reasoning_effort": "none"},
+                {"thinking_effort": "invalid"},
+            ):
+                for extra in (
+                    {}, {"reasoning_effort": "low", "chat_template_kwargs": {"other": 1}},
+                    {"reasoning_effort": "invalid"},
+                    {"chat_template_kwargs": {"thinking_effort": "invalid"}},
+                    {"chat_template_kwargs": {"reasoning_effort": "invalid"}},
+                ):
+                    with self.subTest(effort=effort, template=template, extra=extra):
+                        payload = {"chat_template_kwargs": copy.deepcopy(template), "extra_body": copy.deepcopy(extra)}
+                        if effort is not None:
+                            payload["reasoning_effort"] = effort
+                        once = normalize_controls(payload)
+                        self.assertEqual(normalize_controls(copy.deepcopy(once)), once)
+
+    def test_controls_only_preserves_unspecified_reasoning_default(self):
+        payload = {"messages": [{"role": "user", "content": "hello"}]}
+        self.assertEqual(normalize_controls(copy.deepcopy(payload)), payload)
 
 
 if __name__ == "__main__":

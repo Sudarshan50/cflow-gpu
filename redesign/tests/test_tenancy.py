@@ -40,7 +40,8 @@ class TenancyPolicyTest(unittest.TestCase):
         decision = policy.apply(payload, "FW-Kimi-K3")
         self.assertEqual(decision.traffic_class, "P2-agentic")
         self.assertFalse(decision.routed_off_box)
-        self.assertLessEqual(payload["max_tokens"], 512)
+        self.assertEqual(payload["max_tokens"], 16_384)
+        self.assertEqual(decision.clamp_reason, "class_ceiling")
 
     def test_an_image_turn_is_agentic_and_billed_above_one_image_token(self):
         policy = TenancyPolicy()
@@ -52,6 +53,8 @@ class TenancyPolicyTest(unittest.TestCase):
         }
         decision = policy.decide(payload, "FW-Kimi-K3")
         self.assertEqual(decision.traffic_class, "P2-agentic")
+        self.assertEqual(decision.granted_max_tokens, 2_048)
+        self.assertTrue(decision.default_applied)
 
     def test_prompt_past_the_window_is_rejected(self):
         policy = TenancyPolicy(max_model_len=1000)

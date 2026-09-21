@@ -23,16 +23,22 @@ class TrafficClass:
     ttft_target_seconds: float | None
     kv_budget_share: float
     served_off_box: bool = False
+    # None retains the historical max-as-default for custom/positional classes.
+    default_output_tokens: int | None = None
 
 
-INTERACTIVE = TrafficClass("P0-interactive", Priority.INTERACTIVE, 8_192, 3.0, 0.50)
+INTERACTIVE = TrafficClass("P0-interactive", Priority.INTERACTIVE, 8_192, 3.0, 0.50,
+                           default_output_tokens=2_048)
 SHORT_CHAT = TrafficClass("P1-short-chat", Priority.SHORT_CHAT, 4_096, 1.0, 0.0,
-                          served_off_box=True)
-LONG_CONTEXT = TrafficClass("P2-long-context", Priority.LONG_CONTEXT, 16_384, 60.0, 0.25)
-BATCH = TrafficClass("P3-batch", Priority.BATCH, 32_768, None, 0.25)
+                          served_off_box=True, default_output_tokens=1_024)
+LONG_CONTEXT = TrafficClass("P2-long-context", Priority.LONG_CONTEXT, 16_384, 60.0, 0.25,
+                            default_output_tokens=4_096)
+BATCH = TrafficClass("P3-batch", Priority.BATCH, 32_768, None, 0.25,
+                     default_output_tokens=8_192)
 
 # Tool/vision requests use LONG_CONTEXT priority so overload protection can shed them.
-AGENTIC = TrafficClass("P2-agentic", Priority.LONG_CONTEXT, 512, 15.0, 0.45)
+AGENTIC = TrafficClass("P2-agentic", Priority.LONG_CONTEXT, 16_384, 15.0, 0.45,
+                       default_output_tokens=2_048)
 
 ALL_CLASSES = (INTERACTIVE, SHORT_CHAT, LONG_CONTEXT, BATCH, AGENTIC)
 
@@ -53,17 +59,17 @@ class BatchHintRule(ClassRule):
 
 
 class AgenticRule(ClassRule):
-    """Tools or images, at any prompt length."""
+    """Enabled tools or images, at any prompt length."""
 
     def matches(self, envelope: RequestEnvelope) -> bool:
-        return envelope.has_tools or envelope.has_images
+        return envelope.has_images or (envelope.has_tools and not envelope.tools_disabled)
 
 
 class ShortChatRule(ClassRule):
     def matches(self, envelope: RequestEnvelope) -> bool:
         return (
             envelope.prompt_tokens <= SHORT_CHAT_CEILING_TOKENS
-            and not envelope.has_tools
+            and (not envelope.has_tools or envelope.tools_disabled)
         )
 
 

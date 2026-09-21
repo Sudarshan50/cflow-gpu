@@ -94,7 +94,7 @@ class TokenClampTest(unittest.TestCase):
 
     def test_a_missing_max_tokens_gets_the_class_default(self):
         result = self.clamp.apply(1_000, None, SHORT_CHAT)
-        self.assertEqual(result.granted, SHORT_CHAT.max_output_tokens)
+        self.assertEqual(result.granted, SHORT_CHAT.default_output_tokens)
         self.assertEqual(result.reason, clamping.APPLIED_DEFAULT)
 
     def test_a_prompt_filling_the_window_is_unservable(self):
@@ -180,13 +180,14 @@ class PolicyTest(unittest.TestCase):
         self.assertTrue(decision.admitted)
         self.assertIs(decision.priority, Priority.INTERACTIVE)
 
-    def test_an_agentic_turn_is_capped_at_the_agentic_ceiling(self):
+    def test_an_agentic_turn_preserves_an_explicit_budget_below_its_ceiling(self):
         decision = self.policy.decide(
             _envelope(prompt_tokens=20_000, has_tools=True, requested_max_tokens=8_192)
         )
         self.assertTrue(decision.admitted)
         self.assertEqual(decision.traffic_class, AGENTIC.name)
-        self.assertEqual(decision.clamp.granted, AGENTIC.max_output_tokens)
+        self.assertEqual(decision.clamp.granted, 8_192)
+        self.assertEqual(decision.clamp.reason, clamping.UNCHANGED)
 
     def test_a_long_prompt_with_a_fixed_max_tokens_is_rescued(self):
         decision = self.policy.decide(

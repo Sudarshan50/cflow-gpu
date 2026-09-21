@@ -45,11 +45,12 @@ class LatencySeries:
 
 
 class Registry:
-    """Thread-safe counters and per-class latency series."""
+    """Thread-safe counters, admission gauges, and per-class latency series."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._counters: dict[tuple[str, tuple[tuple[str, str], ...]], float] = {}
+        self._gauges: dict[tuple[str, tuple[tuple[str, str], ...]], float] = {}
         self._ttft: dict[str, LatencySeries] = {}
         self._total: dict[str, LatencySeries] = {}
 
@@ -57,6 +58,18 @@ class Registry:
         key = (name, tuple(sorted(labels.items())))
         with self._lock:
             self._counters[key] = self._counters.get(key, 0.0) + value
+
+    def set_gauge(self, name: str, value: float, **labels: str) -> None:
+        """Publish an absolute admission value, including decreases and zero."""
+        key = (name, tuple(sorted(labels.items())))
+        with self._lock:
+            self._gauges[key] = value
+
+    def set_counter(self, name: str, value: float, **labels: str) -> None:
+        """Import a process-lifetime component counter without scrape races."""
+        key = (name, tuple(sorted(labels.items())))
+        with self._lock:
+            self._counters[key] = max(value, self._counters.get(key, 0))
 
     def observe_ttft(self, traffic_class: str, seconds: float) -> None:
         with self._lock:
@@ -69,11 +82,21 @@ class Registry:
     def render(self) -> str:
         with self._lock:
             counters = dict(self._counters)
+            gauges = dict(self._gauges)
             ttft = {k: sorted(v.samples) for k, v in self._ttft.items()}
             total = {k: sorted(v.samples) for k, v in self._total.items()}
 
         lines: list[str] = []
         for (name, labels), value in sorted(counters.items()):
+            rendered = ",".join(f'{k}="{v}"' for k, v in labels)
+            suffix = f"{{{rendered}}}" if rendered else ""
+            lines.append(f"k3_gateway_{name}{suffix} {value:g}")
+
+        gauge_types = set()
+        for (name, labels), value in sorted(gauges.items()):
+            if name not in gauge_types:
+                lines.append(f"# TYPE k3_gateway_{name} gauge")
+                gauge_types.add(name)
             rendered = ",".join(f'{k}="{v}"' for k, v in labels)
             suffix = f"{{{rendered}}}" if rendered else ""
             lines.append(f"k3_gateway_{name}{suffix} {value:g}")

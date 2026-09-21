@@ -178,6 +178,20 @@ class ClassificationTest(ServerTestCase):
 
 
 class CompletionTokensAndReplicasTest(ServerTestCase):
+    def test_invalid_token_limits_return_400_before_the_engine(self):
+        for field in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
+            for value in (True, False, -1, 0, "16", 1.5):
+                with self.subTest(field=field, value=value):
+                    status, body, _ = _post(
+                        f"{self.base}/v1/chat/completions",
+                        self._chat("private prompt sentinel", **{field: value}),
+                    )
+                    self.assertEqual(status, 400)
+                    error = json.loads(body)["error"]
+                    self.assertEqual(error["type"], "invalid_request_error")
+                    self.assertEqual(error["message"], f"{field}: must be a positive integer")
+        self.assertEqual(MockEngine.received, [])
+
     def test_max_completion_tokens_is_clamped(self):
         status, _, _ = _post(
             f"{self.base}/v1/chat/completions",
