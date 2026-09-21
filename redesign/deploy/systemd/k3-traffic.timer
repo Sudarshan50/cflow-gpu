@@ -1,0 +1,10 @@
+[Unit]
+Description=Kimi-K3 gateway trace analysis every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=yes
+
+[Install]
+WantedBy=timers.target

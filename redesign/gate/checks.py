@@ -34,6 +34,38 @@ from dataclasses import dataclass, field
 
 from .client import Completion, CompletionError, GateClient
 
+
+def _longest_adjacent_run(words: list[str]) -> int:
+    run_length, longest, previous = 0, 0, None
+    for word in words:
+        run_length = run_length + 1 if word == previous else 1
+        longest = max(longest, run_length)
+        previous = word
+    return longest
+
+
+def _longest_phrase_run(words: list[str]) -> tuple[int, int]:
+    best_run, best_n = 1, 1
+    for n in PHRASE_NGRAM_SIZES:
+        if len(words) < n * 2:
+            continue
+        run, longest = 1, 1
+        prev = tuple(words[0:n])
+        i = n
+        while i + n <= len(words):
+            cur = tuple(words[i:i + n])
+            if cur == prev:
+                run += 1
+                longest = max(longest, run)
+                i += n
+            else:
+                run = 1
+                prev = cur
+                i += 1
+        if longest > best_run:
+            best_run, best_n = longest, n
+    return best_run, best_n
+
 TIER_CORRUPTION = 1
 TIER_REASONING = 2
 TIER_LONG_CONTEXT = 3
@@ -44,12 +76,30 @@ DETERMINISM_SAMPLES = 3
 # A token repeated more than this consecutively is degenerate, not fluent.
 MAX_CONSECUTIVE_REPEATS = 12
 
+# A phrase (2-8 words) looping this many times is degenerate, not fluent.
+MAX_PHRASE_REPEATS = 8
+PHRASE_NGRAM_SIZES = range(2, 9)
+
 # Depths as a fraction through the filler, chosen to include both edges and the
 # middle -- the middle is where a lossy KV cache loses information first.
 NEEDLE_DEPTHS = (0.1, 0.5, 0.9)
 
-# Roughly 4 characters per token for the filler used in tier 3.
-FILLER_SENTENCE = "The archive catalogues routine maintenance records. "
+# English filler averages ~6.7 characters per token, not 4.
+FILLER_CHARS_PER_TOKEN = 6.7
+
+FILLER_SENTENCES = (
+    "The archive catalogues routine maintenance records. ",
+    "Bay three was inspected on Tuesday and needed no follow-up. ",
+    "The east wing stores surplus fasteners and spare gaskets. ",
+    "Night shift logged a humidity spike in corridor B and reset the sensor. ",
+    "A crate of unmarked washers sat beside the west loading dock. ",
+    "Calendar note: the freight elevator is reserved for parts, not people. ",
+    "The duty engineer initialled the clipboard and moved to the next bay. ",
+    "Rain against the north glass made the afternoon inventory run long. ",
+)
+
+CLEAN_TEXT_EXPECTED = "ready"
+EXACT_ANSWER_MAX_LAST_LINE = 48
 
 
 @dataclass(frozen=True)
@@ -87,6 +137,10 @@ class Check(abc.ABC):
 # Tier 1 -- corruption
 # ---------------------------------------------------------------------------
 
+def _extracted_integers(text: str) -> tuple[int, ...]:
+    return tuple(int(match) for match in re.findall(r"-?\d+", text))
+
+
 class GreedyDeterminism(Check):
     tier = TIER_CORRUPTION
     name = "greedy-determinism"
@@ -96,17 +150,19 @@ class GreedyDeterminism(Check):
         outputs, elapsed = [], 0.0
         for _ in range(DETERMINISM_SAMPLES):
             try:
-                completion = client.complete(prompt, max_tokens=64)
+                # Reasoning models spend the first tokens on hidden thinking;
+                # 64 was finishing mid-list and comparing truncated prefixes.
+                completion = client.complete(prompt, max_tokens=256)
             except CompletionError as exc:
                 return self._fail(f"request failed: {exc}")
             outputs.append(completion.text.strip())
             elapsed += completion.latency_seconds
 
-        distinct = set(outputs)
-        if len(distinct) != 1:
+        extracted = [_extracted_integers(text) for text in outputs]
+        if len(set(extracted)) != 1 or not extracted[0]:
             return self._fail(
-                f"{len(distinct)} distinct outputs from {DETERMINISM_SAMPLES} greedy runs",
-                latency_seconds=elapsed, observed=" | ".join(sorted(distinct))[:300],
+                f"{len(set(outputs))} distinct outputs from {DETERMINISM_SAMPLES} greedy runs",
+                latency_seconds=elapsed, observed=" | ".join(sorted(set(outputs)))[:300],
             )
         return self._pass("greedy decoding is reproducible",
                           latency_seconds=elapsed, observed=outputs[0][:200])
@@ -124,20 +180,25 @@ class NoDegenerateRepetition(Check):
             return self._fail(f"request failed: {exc}")
 
         words = completion.text.split()
-        run_length, longest, previous = 0, 0, None
-        for word in words:
-            run_length = run_length + 1 if word == previous else 1
-            longest = max(longest, run_length)
-            previous = word
+        longest_word = _longest_adjacent_run(words)
+        longest_phrase, phrase_n = _longest_phrase_run(words)
 
-        if longest > MAX_CONSECUTIVE_REPEATS:
+        if longest_word > MAX_CONSECUTIVE_REPEATS:
             return self._fail(
-                f"a token repeats {longest} times consecutively",
+                f"a token repeats {longest_word} times consecutively",
                 latency_seconds=completion.latency_seconds,
                 observed=completion.text[:300],
             )
-        return self._pass(f"longest repeat run {longest}",
-                          latency_seconds=completion.latency_seconds)
+        if longest_phrase > MAX_PHRASE_REPEATS:
+            return self._fail(
+                f"a {phrase_n}-word phrase repeats {longest_phrase} times",
+                latency_seconds=completion.latency_seconds,
+                observed=completion.text[:300],
+            )
+        return self._pass(
+            f"longest word run {longest_word}, longest phrase run {longest_phrase}",
+            latency_seconds=completion.latency_seconds,
+        )
 
 
 class CleanText(Check):
@@ -156,6 +217,12 @@ class CleanText(Check):
             return self._fail("empty completion",
                               latency_seconds=completion.latency_seconds)
 
+        if CLEAN_TEXT_EXPECTED not in text.casefold():
+            return self._fail(
+                f"expected {CLEAN_TEXT_EXPECTED!r} in the completion",
+                latency_seconds=completion.latency_seconds, observed=text[:200],
+            )
+
         allowed = set(string.printable)
         bad = {c for c in text if c not in allowed and not c.isprintable()}
         if bad:
@@ -163,7 +230,7 @@ class CleanText(Check):
                 f"{len(bad)} non-printable character(s) in output",
                 latency_seconds=completion.latency_seconds, observed=repr(text[:200]),
             )
-        return self._pass("output is clean printable text",
+        return self._pass("output contains the requested reply and is printable",
                           latency_seconds=completion.latency_seconds)
 
 
@@ -196,14 +263,24 @@ class ExactAnswer(Check):
         except CompletionError as exc:
             return self._fail(f"request failed: {exc}")
 
-        found = re.findall(self.pattern, completion.text)
+        lines = [ln.strip() for ln in completion.text.strip().splitlines() if ln.strip()]
+        if not lines:
+            return self._fail("empty completion",
+                              latency_seconds=completion.latency_seconds)
+        last = lines[-1]
+        if len(last) > EXACT_ANSWER_MAX_LAST_LINE:
+            return self._fail(
+                f"last line is {len(last)} chars of prose, not an extractable answer",
+                latency_seconds=completion.latency_seconds, observed=last[:200],
+            )
+        found = re.findall(self.pattern, last)
         normalised = [f.replace(",", "").strip().lower() for f in found]
         if self.expected.lower() in normalised:
-            return self._pass(f"found {self.expected}",
+            return self._pass(f"found {self.expected} on the last line",
                               latency_seconds=completion.latency_seconds)
         return self._fail(
-            f"expected {self.expected}, extracted {normalised[-3:] or 'nothing'}",
-            latency_seconds=completion.latency_seconds, observed=completion.text[:300],
+            f"expected {self.expected} on the last line, extracted {normalised or 'nothing'}",
+            latency_seconds=completion.latency_seconds, observed=last[:300],
         )
 
 
@@ -265,16 +342,23 @@ class NeedleRetrieval(Check):
     def name(self) -> str:
         return f"needle-{self.context_tokens // 1000}k-depth{int(self.depth * 100)}"
 
+    def _filler(self, index: int) -> str:
+        return FILLER_SENTENCES[index % len(FILLER_SENTENCES)]
+
+    def estimated_prompt_tokens(self) -> int:
+        return max(1, int(len(self._build_prompt()) / FILLER_CHARS_PER_TOKEN))
+
     def _build_prompt(self) -> str:
-        target_chars = self.context_tokens * 4
-        filler_units = max(1, target_chars // len(FILLER_SENTENCE))
+        target_chars = int(self.context_tokens * FILLER_CHARS_PER_TOKEN)
+        mean_len = sum(len(s) for s in FILLER_SENTENCES) / len(FILLER_SENTENCES)
+        filler_units = max(1, int(target_chars / mean_len))
         before = int(filler_units * self.depth)
+        haystack = "".join(self._filler(i) for i in range(before))
+        haystack += self.NEEDLE.format(code=self.CODE) + " "
+        haystack += "".join(self._filler(i) for i in range(before, filler_units))
         return (
             "Read the archive below and answer the question that follows.\n\n"
-            + FILLER_SENTENCE * before
-            + self.NEEDLE.format(code=self.CODE)
-            + " "
-            + FILLER_SENTENCE * (filler_units - before)
+            + haystack
             + "\n\nQuestion: what is the maintenance code for bay seventeen? "
               "Reply with the code only."
         )

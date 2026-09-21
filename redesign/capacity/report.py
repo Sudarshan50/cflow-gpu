@@ -1,4 +1,4 @@
-"""Assembles a capacity report. Data only; rendering lives in renderers.py."""
+"""Assembles a capacity report."""
 
 from __future__ import annotations
 
@@ -24,14 +24,25 @@ class CapacityReport:
     hypothesis: hypothesis.HypothesisResult
     scenarios: list[ScenarioResult]
     sweep: list[SweepRow] = field(default_factory=list)
+    observation_fits: tuple[hypothesis.ObservationFit, ...] = ()
 
     configured_max_num_seqs: int = deployment.CONFIGURED_MAX_NUM_SEQS
     observed_running: tuple[int, int] = deployment.OBSERVED_RUNNING
     observed_queued: tuple[int, int] = deployment.OBSERVED_QUEUED
+    observed_peak_concurrency: int = deployment.OBSERVED_PEAK_CONCURRENCY
+    prefix_sharing_modelled: bool = deployment.PREFIX_SHARING_MODELLED
 
     @property
     def modelled_concurrency(self) -> int:
         return self.model.max_concurrency(int(self.mean_prompt_tokens))
+
+    @property
+    def recommended_admission(self) -> int:
+        return self.model.recommended_admission(
+            int(self.mean_prompt_tokens),
+            self.observed_peak_concurrency,
+            deployment.PREFIX_SHARING,
+        )
 
     @property
     def overcommit_factor(self) -> float:
@@ -69,6 +80,12 @@ def build(include_sweep: bool = False) -> CapacityReport:
         model=base,
         mean_prompt_tokens=mean_tokens,
         hypothesis=hypothesis.evaluate(base, deployment.REPORTED_POOL_TOKENS),
-        scenarios=scenarios.evaluate(base, int(mean_tokens)),
+        scenarios=scenarios.evaluate(
+            base,
+            int(mean_tokens),
+            observed_peak=deployment.OBSERVED_PEAK_CONCURRENCY,
+            sharing=deployment.PREFIX_SHARING,
+        ),
         sweep=_build_sweep(base) if include_sweep else [],
+        observation_fits=hypothesis.fit_known_observations(base),
     )

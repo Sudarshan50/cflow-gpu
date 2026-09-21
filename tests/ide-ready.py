@@ -16,15 +16,19 @@ import time
 import urllib.error
 import urllib.request
 
-# This test deliberately goes through the public edge, so it needs a real
-# CUSTOMER key (from customers.tsv), not the upstream key in api-key.txt.
-#   K3_PUBLIC_URL=https://cflox.store/v1 K3_CUSTOMER_KEY=sk-k3-... ./ide-ready.py
-BASE = os.environ.get("K3_PUBLIC_URL", "https://cflox.store/v1")
+# Public edge. Key must be a LiteLLM virtual key, not customers.tsv / api-key.txt.
+#   K3_PUBLIC_URL=https://api.cflowx.in/v1 EDGE_KEY_FILE=/scratch/deploy/edge.key ./ide-ready.py
+BASE = os.environ.get("K3_PUBLIC_URL", "https://api.cflowx.in/v1")
 KEY = os.environ.get("K3_CUSTOMER_KEY", "")
 if not KEY:
-    sys.exit("K3_CUSTOMER_KEY is unset. Pass a key from customers.tsv:\n"
-             "  K3_CUSTOMER_KEY=$(awk -F'\\t' '!/^#/&&NF{print $2; exit}' "
-             "/scratch/deploy/customers.tsv) ./ide-ready.py")
+    key_file = os.environ.get("EDGE_KEY_FILE", "/scratch/deploy/edge.key")
+    try:
+        with open(key_file, encoding="utf-8") as fh:
+            KEY = fh.read().strip()
+    except OSError:
+        KEY = ""
+if not KEY:
+    sys.exit("set K3_CUSTOMER_KEY or EDGE_KEY_FILE to a LiteLLM virtual key")
 HDR = {"Content-Type": "application/json", "Authorization": f"Bearer {KEY}"}
 CTX = ssl.create_default_context()
 fails = []

@@ -1,6 +1,7 @@
 # System Design v2 — Capacity-First Serving for Kimi-K3 on 8× MI355X
 
-**Status:** proposed, unimplemented. Written 2026-09-20.
+**Status:** live on the box, 2026-09-20. Partial. See §6.1 for what was
+tried and what failed.
 **AUDITED 2026-09-20** by four independent reviewers. Several quantitative
 claims below were found unsound and are corrected inline. Read
 [`redesign/AUDIT-2026-09-20.md`](../redesign/AUDIT-2026-09-20.md) before acting
@@ -243,9 +244,9 @@ confident arithmetic.
         client
           │
           ▼
-  ┌───────────────┐   TLS, default-deny, per-key conn caps, usage.log
+  ┌───────────────┐   TLS, default-deny (Bearer present), per-key conn caps, usage.log
   │  nginx (keep) │   owns: transport + attribution
-  └───────┬───────┘   owns NOT: anything token-aware
+  └───────┬───────┘   owns NOT: anything token-aware, key allowlists, credential swap
           │
           ▼
   ┌───────────────┐   virtual keys, token budgets, spend, class assignment,
@@ -267,11 +268,18 @@ confident arithmetic.
   └───────────────────────────────────────────┘  owns NOT: customers, quotas
 ```
 
+Nginx forwards the client's `Authorization` header unchanged. It does not
+read `customers.tsv` and it does not replace the header with a LiteLLM master
+key. A missing or non-Bearer header is 401. A Bearer token is a conn/req
+identity only; LiteLLM decides whether it is a real user and how much they
+may spend.
+
 The engine owns *scheduling* — the gateway has no view of memory.
-The gateway owns *tenancy* — the engine has no concept of a customer.
-The backpressure service is the seam: it reads `gpu_cache_usage_perc`, the
-running/waiting gauges and the preemption counter, and refuses classes when the
-engine says it is in trouble. **It never computes a token budget of its own.**
+LiteLLM owns *tenancy* — who and how much. The engine has no concept of a customer.
+The backpressure service (the gateway process) is the seam: it reads
+`gpu_cache_usage_perc`, the running/waiting gauges and the preemption counter,
+and refuses classes when the engine says it is in trouble. **It never computes
+a token budget of its own.**
 
 ---
 
@@ -310,27 +318,27 @@ assuming ~5 min per engine restart (measured startup: 262 s).
 |---|---|---|---|---|---|
 | **A1** | MLA KV de-duplication — DP attention (SGLang) or DCP (vLLM) | Partitions the KV latent by sequence (DP attention) or by token (DCP) instead of replicating it per rank | **up to ~8× pool** | **Z2: available on SGLang, NOT on vLLM.** vLLM's DCP lists hybrid-model integration as future work, has no ROCm support, and K3 itself is "underway". SGLang documents `--enable-dp-attention` in its K3 recipe and has merged hybrid DP-attention fixes. | ~4 h |
 | **A2** | fp8 KV cache (`e4m3`) | Halves MLA bytes/token | **~2× pool** | **Z2: available on SGLang, blocked on vLLM.** vLLM ROCm tracker #50682 lists fp8 KV as in-progress and not working on MI355X. Silent-garbage risk either way. | ~3 h |
-| **A3** | CPU DRAM L2 tier | Offloads evicted blocks to host RAM | ~2× *addressable* (not resident) | Medium. Connector instability above 64 GB documented (vLLM #52656). | ~6 h |
+| **A3** | CPU DRAM L2 tier | Offloads evicted blocks to host RAM | ~2× *addressable* (not resident) | **FAILED 2026-09-20 on vLLM native.** Write-only. Disabled. | done |
 
 A1 and A2 multiply. If both land, KV stops binding entirely and the design's
-centre of gravity moves to compute. A3 is a different axis — it raises hit rate,
-not concurrency — and is the fallback if A1 proves unavailable.
+centre of gravity moves to compute. A3 was the fallback after A1. It is not
+a fallback on this engine: it copies KV to host and never serves it back.
 
 ### Tier B — Waste: stop discarding completed work
 
 | # | Optimization | Effect | Confidence | GPU |
 |---|---|---|---|---|
-| **B0** | `cache_salt` audit | Potentially the entire hit-rate collapse | High | **zero** |
+| **B0** | `cache_salt` audit | Sharing works; inbound salts now dropped | **PASS** | **zero** |
 | **B1** | Right-size `max-num-seqs` | **NUMBER WITHDRAWN.** The direction may hold — the box was preempting — but the model that produced "~75" has no prefix-sharing term, and `K3-DEPLOYMENT.md:39` records **427 concurrent sustained**. Acting on 75 risked a ~5× throughput cut. | **Low** | ~1 h |
-| **B2** | Priority scheduling + classes | Protects interactive TTFT | High | ~2 h |
-| **B3** | `long-prefill-token-threshold` | Caps the tail's scheduling share, breaking the eviction spiral | Medium-high | shared |
+| **B2** | Priority scheduling + classes | Protects interactive TTFT | **On** | done |
+| **B3** | `long-prefill-token-threshold` | Caps the tail's scheduling share | **On at 16384** | done |
 
 ### Tier C — Compute: only binds after Tier A
 
 | # | Optimization | Effect | Note |
 |---|---|---|---|
 | **C1** | AITER flag contract (`VLLM_ROCM_USE_AITER_MOE_SITUV2_A8W4`) | Prevents a 2.06× decode regression presenting as an upgrade failure | Mandatory on any image change. Static-analysis result from `FINDINGS.md` §2. |
-| **C2** | `max-num-batched-tokens` re-tune | Plausibly 10–20% TTFT | Currently 8192, tuned against a 12.8k-prompt benchmark. Observed mean is ~30k. Almost certainly mis-sized. |
+| **C2** | `max-num-batched-tokens` re-tune | Plausibly 10–20% TTFT | **Done.** Live value is **16384** (was 8192). |
 | **C3** | A8W4 vs A4W4; KDA fused decode | **Re-ranked upward.** Previously dismissed as "sub-1% end-to-end" using the *token* ratio. That is the right denominator for memory and the wrong one for latency: prefill p50 is **1.10 s** and decode p50 is **33.25 s**, so decode is ~**72% of end-to-end**. An 8.9% decode-layer gain is ~8.9% of 33 s. |
 | **C4** | DSpark / speculative decoding | Re-evaluate | The "97.7% input" dismissal used the same wrong denominator. The batch-size argument still stands; measure rather than assume. |
 
@@ -348,6 +356,211 @@ not concurrency — and is the fallback if A1 proves unavailable.
 |---|---|---|
 | **E1** | LiteLLM off-box fallback | Degraded quality instead of an outage during a spot reclaim |
 | **E2** | Per-class SLO instrumentation | Marginal hit rate, per-class TTFT, KV occupancy by class, preemption rate |
+
+### 6.1 Tried and measured — 2026-09-20
+
+Live path: `nginx (api.cflowx.in) → LiteLLM :4000 → gateway :8002 → vLLM :8001`.
+One replica. No second engine. Distill parked. Off-box URL not invented.
+
+| Item | Result | Evidence |
+|---|---|---|
+| **A1** DP attention / SGLang hybrid | **FAIL / tripwire.** Hybrid mamba OOM. Reverted to A3-only on vLLM. | bring-up RuntimeError |
+| **A2** fp8 KV | **Run 2026-09-20, not inherited.** `--kv-cache-dtype fp8_e4m3` is accepted and the pool doubles, but with `VLLM_ROCM_USE_AITER=1` the fp8 MLA decode path resolves to `aiter/ops/triton/gluon/mla_gluon.py`, whose `bh16bn128` variant asserts `batch_size=1` — every worker died with `requires batch_size=1, got 160` during profiling. Retested with `VLLM_ROCM_USE_AITER_MLA=0` (AITER MoE, and therefore the C1 contract, untouched). See §6.5. | this session's engine log |
+| **A3** 64 GB host L2 | **FAIL on the read path.** GPU→CPU writes (fill/replay ~806 GB/wave). CPU→GPU **0**. `external_prefix_cache_hits` **0**. Replay TTFT identical to fill (23.83 s vs 23.82 s). **Disabled on the next restart.** Do not raise 64 GB. | `/scratch/deploy-state/bench/a3-readpath/scorecard.json` |
+| **GPU prefix cache** | **WORKS when the prefix stays in HBM.** Documented 18432+7168 point: **70.6% cold / 99.8% hot**, 0 preemptions. | `g-opt-baseline` |
+| **B0** `cache_salt` | **PASS.** Identical probe raised hit counters. Tenancy now **drops** inbound `cache_salt` / `prompt_cache_key` so a portal pool can share. | `/scratch/deploy-state/cache-salt.json` |
+| **B1** admission | **Kept 427** (withdrawn "75" not applied). 0 preemptions under both campaigns. | live `max-num-seqs` |
+| **B2 / B3** priority + long-prefill | **On.** `scheduling-policy: priority`, threshold 16384. | `/scratch/hf/config.yaml` |
+| **C1** AITER | **On.** | `vllm-k3.env` |
+| **C2** batched tokens | **On at 16384.** | config |
+| **D2** clamp | **On** at LiteLLM + gateway. | tenancy callback |
+| **D1 / E1** off-box | **Armed, empty.** No `K3_OFFBOX_URL`. | — |
+| **C3 / C4** decode kernels / spec | **Not started.** Now the highest remaining *compute* bets: A-tier capacity is exhausted on this engine. | — |
+
+Shared-prefix capacity (engine, 128 out): cold 64-conc **2.00M total TPM** / 10.1k gen TPM; hot 128-conc **8.90M total TPM** / 45.1k gen TPM. Size a YYDS channel at **1.5M TPM / 400 RPM / 96 conc**, not the 3M model-group cap.
+
+### 6.2 Tier F — after A3 read-path fail
+
+The box is a **GPU-resident prefix-cache** server. Host RAM is not a second cache.
+
+| # | Optimization | Why now | GPU |
+|---|---|---|---|
+| **F1** | Disable A3 | Stops ~806 GB/wave of useless HBM↔host copies. Same hits as before (zero L2 hits). | 1 restart |
+| **F2** | Drop client `cache_salt` at the tenancy hop | One portal key + per-user salts would partition the only cache that works. | zero |
+| **F3** | nginx `limit_conn` 32 → **96** (key and portal IP) | A shared YYDS key is a pool. 32 clipped it before TPM. 96 is still far under admission 427. | zero |
+| **F4** | Keep GPU prefix caching; do not salt by customer | The 70.6% / 99.8% result is the product. | zero |
+| **F5** | C3 decode (A8W4 / KDA fused) | Capacity levers A1–A3 are done or dead. Decode is ~72% of e2e latency. | image change + Z5 |
+| **F6** | C4 speculative decode | Same reason as F5. Measure; do not assume. | image / flag |
+| **F7** | Off-box P1 (D1/E1) when a real URL exists | Removes short-chat churn at zero HBM. Do not invent a URL. | zero |
+| **F8** | Portal/channel TPM 1.5M, not 3M | 3M is the *group* cap across providers. This box's honest cold share is ~1.5–2.0M. | zero |
+| **F9** | Snapshot before the next engine experiment | Last droplet died with no snapshot. | ops |
+| **F10** | Do not try LMCache / HiCache / raise-64GB as a silent A3 retry | Native offload already writes and never reads. A new connector is a new session with a written pass/fail, not a config tweak. | new session |
+
+### 6.3 Observed request shape — YYDS Lioxi, 2026-09-20 16:35Z
+
+The first real portal wave is **not** the g-opt bench (shared 18432 prefix, 128-out).
+It is agentic + vision on one 3M/96 key:
+
+| Fact | Live number | Consequence |
+|---|---|---|
+| Prompt p50 / p90 / max (success) | 8.6k / 60k / 174k | Prefill-bound. Decode kernels (F5/F6) are the wrong next bet for this wave. |
+| Completion p50 | **16** tokens | Output reservation, not output compute, is what costs HBM. |
+| Prefill:decode TPM | ~42:1 (374k / 9k) | KV fills; gen TPM is noise. |
+| Images | 43 / 179 successes, 3.7k–13k image tokens | Estimator still bills **1024**/image → under-classifies as P0. |
+| Prefix hit | ~12% this window, 31% lifetime; some 4608 / 18432 shares | GPU prefix works. Most tokens are unique. |
+| Classification | 95 P0 admitted vs 72 P2 | `tools` disqualifies P1, so a 20k tool loop becomes **P0**. P0 is never shed. |
+| Channel cap | Lioxi **3M TPM / 3000 RPM / 96 conc** | F8 was never applied. The key can stampede the only replica. |
+| Engine | 62 running / 36 waiting / KV 98% / admission **427** | 427 was sized for short decode. At ~30k unique prompt, the pool holds ~**60–90** resident seqs. Extra admits sit on `capacity` and preempt. |
+| Failures | clamp-too-long as **500**; shed as 429 then LiteLLM "no deployments" | Correct decisions, wrong status / cooldown.
+
+**Re-rank:** F5/F6 stay parked until this wave's decode share is material. Do not invent `K3_OFFBOX_URL`. Do not retry A3.
+
+### 6.4 Tier G — this wave, zero GPU first
+
+| # | Optimization | Mechanism | Why this traffic | GPU |
+|---|---|---|---|---|
+| **G1** | New class **P2-agentic** (tools or images) | Sheddable priority 2. `max_output` **512** (they emit 16–90). TTFT target 15 s, not 3 s. | Stops tool loops from wearing the P0 SLO and the "never shed" shield. | zero |
+| **G2** | Apply F8 on Lioxi | **1.5M TPM / 400 RPM / 32–48 conc** | 96 conc × 30k prompt is more KV than the box has. | zero |
+| **G3** | Clamp / oversize → **400**, not 500 | `ValueError` in the LiteLLM hook becomes InternalServerError | 11 live 500s were "320k–430k leaves no room". The portal retries those as outages. | zero |
+| **G4** | Image estimate **1024 → 4096** (or bytes-derived) | Conservative over-count | Live images are 3.7k–13k. Under-count sends 60k+ jobs through as P0. | zero |
+| **G5** | Hard cap `max_tokens` on tool loops at **512** even if the client asked for 8k | D2 class ceiling for G1 | Engine reserves prompt+max_tokens. 30k+8k × 60 = the whole pool. | zero |
+| **G6** | Shed on **KV>90% and waiting>0**, not only preemption rate | Backpressure already has `kv_usage>95%` but P0 is exempt | Once G1 moves the wave off P0, this actually fires before 36 deep. | zero |
+| **G7** | Stop stamping `payload["priority"]` | LiteLLM Redis heap `TypeError: tuple vs list` still in spend | Two live failures. Tenancy already has the class in metadata. | zero |
+| **G8** | Recompute B1 from this shape | `max-num-seqs` ≈ pool / mean unique prompt ≈ **64–96**, not 427 | 427 admits work the KV cannot seat. Needs an engine restart; do after G1–G5. | 1 restart |
+| **G9** | Prefix-stabilize agent payloads | Canonicalize `tools` JSON; drop volatile stamps already covered by F2 | Shared 4.6k/18k hits exist. Reordered tool schemas bust the only cache that works. | zero |
+| **G10** | Do not spend a restart on C3/C4 for this wave | Decode is 16 tokens | Measure again if completion p50 leaves the tens. | — |
+
+Do G1–G7 without touching the engine. G8 is the one restart that matches the live occupancy math. G9 is a tenancy normalize, same hop as F2 / thinking_effort.
+
+### 6.5 Results — optimization wave of 2026-09-20 17:00–18:15Z
+
+Everything below was measured on this box in this session. Nothing is inherited
+from `K3-DEPLOYMENT.md`, the vendor tracker, or an earlier wave. Records are in
+`/scratch/deploy-state/bench/opt-2026-09-20/`.
+
+**Shipped, control plane (G1–G7).** Live-traffic verified.
+
+| item | state | evidence |
+|---|---|---|
+| G1 P2-agentic class | shipped | `k3_gateway_requests_total{traffic_class="P2-agentic"}` incrementing on portal traffic within seconds of restart |
+| G3 oversize → 400 | shipped | edge returns `400 invalid_request_error "prompt of 342,862 tokens leaves no room for output"`, was 500 |
+| G4 image estimate 4096 | shipped | `IMAGE_TOKENS`, calibrated against live `prompt_tokens_details` of 3,764 / 9,410 / 13,174 |
+| G5 agentic `max_tokens` ≤ 512 | shipped | falls out of G1's class ceiling; covered by `test_an_agentic_turn_is_capped_at_the_agentic_ceiling` |
+| G6 earlier shed | shipped | distress now also fires on KV > 90% **with** a queue deeper than 8, not only at 97% or on preemption |
+| G7 priority stamping | no change needed | the `tuple vs list` TypeError is confined to 15:04:19Z, before the F2 normalize shipped; `priority` is already stripped from client payloads |
+
+**A2 fp8 KV — tested and rejected on measurement.**
+
+1. It runs, and the pool really does double: **2,197,339 → 4,320,192 tokens**
+   (16.48x vs 8.39x max concurrency at full window).
+2. It costs the AITER MLA kernel. With `VLLM_ROCM_USE_AITER=1` every worker
+   aborts in profiling: `mla_gluon[bh16bn128] requires batch_size=1, got 160`
+   from `aiter/ops/triton/gluon/mla_gluon.py`. Serving fp8 at all requires
+   `VLLM_ROCM_USE_AITER_MLA=0`.
+3. It buys nothing at the shape that matters, because **the doubled pool is not
+   the binding constraint**. Cold cache, 96 offered, 30.4k prompts:
+
+   | build | running | KV usage | prompt tok/s |
+   |---|---|---|---|
+   | fp8_e4m3 | 40 | 33.4% | 13,531 |
+   | bf16 + AITER MLA | 42 | 59.8% | 13,976 |
+
+   fp8 stores the same tokens in ~56% of the bytes exactly as advertised, and
+   then stops at the same ~42 sequences with two thirds of the pool idle.
+4. Tier 3 of the Z5 gate lost one check against a bf16 control taken in the
+   same session — `needle-128k-depth10` failed on fp8 (leaked `<|open|>`) and
+   passed on bf16.
+
+Given (3), the correctness question in (4) is not worth resolving: there is no
+throughput to buy. A2 is closed for this hardware and model.
+
+**`needle-128k-depth50` is a pre-existing failure, not a regression.** It fails
+on all three builds tried today — fp8, the bf16 control with AITER MLA off, and
+the shipped bf16 with AITER MLA on. The planted code is `PHOENIX-4471` and the
+shipped build answers `PHOENIX-447`: it finds the needle at that depth and drops
+the final digit, which the check's substring test scores as a miss. The other
+two builds answered `<|open|>`, a bare control token, which additionally
+suggests `gate/client.py` may be reading a channel-tagged K3 response rather
+than the answer text. So the gate is red on the serving build for a reason that
+predates this wave. Two things it needs before it can convict anything at 128k:
+repeat-N instead of one greedy sample per depth, and a near-miss distinct from
+a miss.
+
+### 6.6 The real capacity lever is the prefix cache, not the KV dtype
+
+The seat count on this hybrid KDA+MLA model tracks the prefix-cache hit rate,
+not the KV pool. Two runs of *identical* work, same build, same offered load of
+96 × 30.4k tokens:
+
+| prefix hit rate | running | KV usage | prompt tok/s |
+|---|---|---|---|
+| 14.5% (cold) | 42 | 59.8% | 13,976 |
+| 34.0% (warm) | 66 | 94.1% | **22,393** |
+
+**+60% throughput from cache hits alone**, on work that was byte-identical.
+Mamba/KDA state is per-sequence and is not shrunk by `kv-cache-dtype`, which is
+why fp8 could not raise the seat count while shared prefixes could. Live
+traffic sits at 21.8%.
+
+That makes prefix reuse the highest-value remaining work, above anything in the
+A tier: every point of hit rate is a seat, and every seat is throughput.
+
+**Live reuse, 622 requests with usage detail, 2026-09-20 13:00–18:00Z.** From
+`LiteLLM_SpendLogs.metadata → additional_usage_values.prompt_tokens_details`:
+
+| band | requests | mean prompt |
+|---|---|---|
+| **0 — total miss** | **348 (56%)** | 20,993 |
+| 1–24% | 111 | 44,989 |
+| 25–49% | 80 | 25,422 |
+| 50–74% | 17 | 31,444 |
+| 75–100% | 66 | 23,953 |
+
+18.9% of all prompt tokens were reused (3,107,456 of 16,448,618). The 348 total
+misses alone are ~7.3M tokens of prefill that bought nothing. A *total* miss
+means even the first block missed, so the divergence is at the very head of the
+prompt — not in the body.
+
+### 6.7 G9, corrected: it is tool **array** order, not key order
+
+G9 as written in §6.4 — "canonicalize tools JSON" — would have been a no-op.
+K3's own encoder already calls `deep_sort_dict` on `tools` (`encoding_k3.py`
+:598), which sorts each schema's keys and **preserves array order**, and it
+renders the tool declaration *ahead of all conversation content*
+(:615). So key order is free and array order is total.
+
+Measured through the engine's `/tokenize`, i.e. the real encoder, against a
+1142-token reference (`eval/harness/prefix_probe.py`):
+
+| variation | shared prefix, raw | with normalize |
+|---|---|---|
+| tool dict keys reversed | 1142 (100%) | 1142 (100%) |
+| tools array rotated | **35 (3.1%)** | **1142 (100%)** |
+| tools array reversed | **35 (3.1%)** | **1142 (100%)** |
+| one extra tool appended | 154 (13.2%) | 154 (13.2%) |
+| next conversation turn appended | 1142 (96.5%) | 1142 (96.5%) |
+
+`media.normalize_payload` now sorts `tools` and `functions` by name, so a client
+that reshuffles its tool list keeps the whole prompt instead of 3% of it.
+Declaration order carries no meaning to the caller. Arrays with duplicate or
+missing names are left alone, because names no longer identify the entries and
+any sort would be a guess.
+
+Two limits worth stating. Changing the tool *set* still costs the declaration
+block (13.2%), because it is one compact JSON blob rendered before everything;
+sorting bounds that loss to the blob and puts a late-sorting new tool after the
+reusable part instead of shifting all of it. And growing conversation history was
+never the problem — it already reuses 96.5%.
+
+This is a mechanism fix, so it is not yet an attributed throughput number: the
+portal went idle before it shipped, and `cached_tokens` per request is the metric
+to re-read against the 18.9% baseline when traffic returns.
+
+One caveat on the instrument: the warm number above was an accident. The load
+generator built deterministic bodies, so the second run of an A/B inherited the
+first run's cache and read 60% faster on the same work. `agentic_load.py` now
+salts bodies per run; an A/B that does not compare cold to cold is measuring
+the cache, not the build.
 
 ---
 
@@ -510,7 +723,7 @@ is an extension, not a rewrite.
 | **G-build** | Does the fresh SGLang stack stand up and serve? | Engine loads, gate baseline recorded, **snapshot taken before anything else** | ~2 h + weight pull |
 | **G2** | Does `--enable-dp-attention` de-duplicate the KV pool for K3? | **AGGREGATE served tokens across all DP ranks**, or sustained concurrency × mean prompt — never the per-rank pool log line, which stays ~2.3M under DP attention and would record a correct 8× win as a failure. Plus: per-rank occupancy spread (DP attention concentrates the long tail on one rank), preemptions 0, gate passes, **P0 TTFT p95 does not regress** | ~4 h |
 | **G3** | Does fp8 KV double the pool again without corrupting output? | Both, or revert | ~3 h |
-| **G4** | Is a host KV tier still needed after A1+A2? | Only run if G2/G3 leave KV binding | ~6 h |
+| **G4** | Does native host L2 serve prefixes after GPU eviction? | **FAIL 2026-09-20.** A3 disabled. Do not re-book as a size ramp. | done |
 
 **G0 and G1 are retired.** G0's question — is the pool replicated — was settled
 offline by `redesign/capacity/hypothesis.py` at 3.2% error versus 726% for the
@@ -548,7 +761,7 @@ pinned SGLang MI35x image during G-build, before booking G2 — if
 | Hit-rate collapse is client `cache_salt`, not eviction | **High** | Z1 gates everything. |
 | fp8 / 4-bit KV produces silent garbage (§7.3 failure class) | **High** | Z5 gate extension; correctness gate before any customer traffic. Never trust a throughput benchmark to detect it. |
 | Spot reclaim during business hours | **High** | §10. |
-| CPU offload connector instability at scale (vLLM #52656) | Medium | Ramp 64 → 128 → 256 → 512 GB with a soak per step; first instability is the ceiling. `SimpleCPUOffloadConnector` over `OffloadingConnector`. |
+| CPU offload connector instability at scale (vLLM #52656) | Medium | **Superseded.** Native L2 is write-only at 64 GB (G4 / a3-readpath). A3 is off. Do not ramp. |
 | `max-num-seqs` right-sizing overshoots downward, costing throughput | Medium | Tune upward from a stable base once preemptions are zero — far safer than tuning down from 512. |
 | LiteLLM becomes an SSE relay bottleneck | Medium | Benchmark at production concurrency before cutover; D3 tripwire. |
 | Backpressure service is a new SPOF in the request path | Medium | **Fail open** on controller error — degraded admission beats no service. |

@@ -4,13 +4,13 @@
 Three sources, because no single one answers "is the service healthy":
   - vLLM's Prometheus endpoint: engine-side throughput, queue depth, latency
     histograms, KV and prefix-cache state.
-  - nginx's k3usage access log: who is calling, what status they got, and how
-    long the edge took. This is the only place per-customer identity exists;
-    vLLM sees one upstream credential for everybody.
+  - nginx's k3usage access log: status, edge latency, and client IP. nginx no
+    longer names customers (every non-empty Authorization is "bearer"), so
+    inference rows are grouped by client IP. Portal/UI hits are omitted.
   - rocm-smi: per-card utilisation and VRAM.
 
 Read-only: it never sends inference traffic, so it cannot perturb what it
-measures. Binds loopback only; nginx supplies TLS and basic auth.
+measures. Bind address is DASH_ADDR (loopback by default).
 """
 
 import calendar
@@ -27,14 +27,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VLLM_BASE = os.environ.get("VLLM_BASE_URL", "http://127.0.0.1:8001")
 METRICS_URL = VLLM_BASE.rstrip("/") + "/metrics"
-PUBLIC_URL = os.environ.get("PUBLIC_URL", "https://cflox.store/v1")
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "https://api.cflowx.in/v1")
 ACCESS_LOG = os.environ.get("ACCESS_LOG", "/var/log/k3/usage.log")
-CERT_PATH = os.environ.get("CERT_PATH", "/etc/letsencrypt/live/cflox.store/fullchain.pem")
+GPU_METRICS_URL = os.environ.get("GPU_METRICS_URL", "http://127.0.0.1:5000/metrics")
+CERT_PATH = os.environ.get(
+    "CERT_PATH", "/etc/letsencrypt/live/api.cflowx.in/fullchain.pem")
 # Used only to read /v1/models for the served name and context limit. Optional:
-# everything else works without it.
+# loopback /v1/models is unauthenticated, so a missing file is fine.
 API_KEY_FILE = os.environ.get("API_KEY_FILE", "/scratch/deploy/api-key.txt")
 LISTEN_PORT = int(os.environ.get("DASH_PORT", 8080))
-# Loopback only: the app has no auth of its own, nginx adds it.
+# Default loopback. The container unit sets 0.0.0.0 so host:8080 works.
 LISTEN_ADDR = os.environ.get("DASH_ADDR", "127.0.0.1")
 
 SCRAPE_INTERVAL = 2.0
@@ -100,16 +102,12 @@ HISTOGRAMS = {
     "e2el": ["vllm:e2e_request_latency_seconds",
              "vllm:request_inference_time_seconds"],
     "queue": ["vllm:request_queue_time_seconds"],
-    # Prefill and decode split the request: a slow prefill is a prompt-size or
-    # cache-miss problem, a slow decode is a batching problem. They need
-    # different fixes, so showing only end-to-end hides which one to apply.
+    # Engine phase timings; these do not isolate individual kernel costs.
     "prefill": ["vllm:request_prefill_time_seconds"],
     "decode": ["vllm:request_decode_time_seconds"],
     "prompt_len": ["vllm:request_prompt_tokens"],
     "gen_len": ["vllm:request_generation_tokens"],
-    # What clients ASK for, as opposed to what they get. vLLM reserves
-    # prompt+max_tokens against one window, so a fleet defaulting to a huge
-    # max_tokens is the documented cause of spurious 400s.
+    # Requested output budget, distinct from generated-token counts.
     "client_max_tokens": ["vllm:request_params_max_tokens"],
     "batch_tokens": ["vllm:iteration_tokens_total"],
 }
@@ -281,24 +279,112 @@ def percentiles_from_bucket_delta(prev, cur, quantiles=(0.5, 0.9, 0.95, 0.99)):
     return out
 
 
-_ACCESS_RE = re.compile(
+# Pre-LiteLLM format, still present in rotated logs.
+_ACCESS_LEGACY_RE = re.compile(
     r"^(?P<ts>\S+)\s+cust=(?P<cust>\S*)\s+status=(?P<status>\d+)\s+"
     r"path=(?P<path>\S+)\s+req_ms=(?P<req>\S+)\s+up_ms=(?P<up>\S+)\s+"
     r"in=(?P<in>\d+)\s+out=(?P<out>\d+)\s+ip=(?P<ip>\S+)\s*$"
 )
 
+# Live nginx k3usage (SYSTEM-DESIGN §4):
+#   $remote_addr $k3_customer [$time_local] "$request" $status $body_bytes_sent
+#   rt=$request_time ttfb=$upstream_header_time cls=$upstream_http_x_k3_class
+# $k3_customer is empty or the literal "bearer". $time_local is not ISO-8601.
+_ACCESS_LIVE_RE = re.compile(
+    r"^(?P<ip>\S+)(?:\s+(?P<cust>\S+))?\s+"
+    r"\[(?P<ts>[^\]]+)\]\s+"
+    r'"(?P<method>\S+)\s+(?P<path>\S+)(?:\s+[^"]*)?"\s+'
+    r"(?P<status>\d+)\s+(?P<out>\d+)"
+    r"(?:\s+rt=(?P<req>\S+))?"
+    r"(?:\s+ttfb=(?P<up>\S+))?"
+    r"(?:\s+cls=(?P<cls>\S+))?"
+)
+
+
+def parse_access_ts(raw):
+    """ISO-8601 or nginx $time_local (`20/Sep/2026:17:07:26 +0000`)."""
+    from datetime import datetime, timezone
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw).timestamp()
+    except Exception:
+        pass
+    for fmt in ("%d/%b/%Y:%H:%M:%S %z", "%d/%b/%Y:%H:%M:%S"):
+        try:
+            dt = datetime.strptime(raw, fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except Exception:
+            continue
+    return None
+
+
+def parse_access_line(line):
+    """Parse one usage-log line. None if the line is not a request record."""
+    line = line.strip()
+    if not line:
+        return None
+    m = _ACCESS_LIVE_RE.match(line)
+    if m:
+        ts = parse_access_ts(m.group("ts"))
+        if ts is None:
+            return None
+        return {
+            "ts": ts,
+            "cust": (m.group("cust") or "").strip(),
+            "status": int(m.group("status")),
+            "path": m.group("path").split("?", 1)[0],
+            "req_s": _to_float(m.group("req")),
+            "up_s": _to_float(m.group("up")),
+            "in": 0,
+            "out": int(m.group("out")),
+            "ip": m.group("ip"),
+            "cls": (m.group("cls") or "").strip(" -") or None,
+        }
+    m = _ACCESS_LEGACY_RE.match(line)
+    if not m:
+        return None
+    ts = parse_access_ts(m.group("ts"))
+    if ts is None:
+        return None
+    return {
+        "ts": ts,
+        "cust": m.group("cust") or "",
+        "status": int(m.group("status")),
+        "path": m.group("path"),
+        "req_s": _to_float(m.group("req")),
+        "up_s": _to_float(m.group("up")),
+        "in": int(m.group("in")),
+        "out": int(m.group("out")),
+        "ip": m.group("ip"),
+        "cls": None,
+    }
+
+
+def access_identity(row):
+    """Group key for a parsed row. nginx no longer names customers."""
+    cust = row.get("cust") or ""
+    if not cust:
+        return "(unauthenticated)"
+    if cust == "bearer":
+        return row.get("ip") or "bearer"
+    return cust
+
+
+def is_inference_path(path):
+    return (path or "").startswith("/v1/")
+
 
 class AccessTail:
     """Incremental reader for nginx's k3usage log.
 
-    Per-customer identity, status codes and edge latency only exist here: the
-    proxy swaps every customer key for one upstream credential, so vLLM's own
-    metrics cannot attribute anything. Survives rotation by watching the inode
-    and reseeking to 0 when the file shrinks.
-
-    The field is named req_ms in the log format but nginx's $request_time is
-    in SECONDS; it is converted once, here, so the rest of the code can treat
-    every latency as seconds.
+    Status, edge latency and client IP only exist here. nginx maps every
+    non-empty Authorization to "bearer", so inference rows are grouped by
+    IP. Survives rotation by watching the inode and reseeking to 0 when the
+    file shrinks. $request_time is already seconds.
     """
 
     def __init__(self, path):
@@ -343,41 +429,23 @@ class AccessTail:
         self.error = None
         parsed = []
         for line in chunk.splitlines():
-            m = _ACCESS_RE.match(line.strip())
-            if not m:
-                continue
-            ts = self._parse_ts(m.group("ts"))
-            if ts is None:
-                continue
-            parsed.append({
-                "ts": ts,
-                "cust": m.group("cust") or "",
-                "status": int(m.group("status")),
-                "path": m.group("path"),
-                "req_s": _to_float(m.group("req")),
-                "up_s": _to_float(m.group("up")),
-                "in": int(m.group("in")),
-                "out": int(m.group("out")),
-                "ip": m.group("ip"),
-            })
+            row = parse_access_line(line)
+            if row is not None:
+                parsed.append(row)
         if parsed:
             with self.lock:
                 self.rows.extend(parsed)
-
-    @staticmethod
-    def _parse_ts(raw):
-        # $time_iso8601 is like 2026-09-18T15:18:59+00:00.
-        try:
-            from datetime import datetime
-            return datetime.fromisoformat(raw).timestamp()
-        except Exception:
-            return None
 
     def view(self, window_s=ACCESS_WINDOW_S):
         now = time.time()
         with self.lock:
             rows = [r for r in self.rows if now - r["ts"] <= window_s]
             total_rows = len(self.rows)
+
+        # Portal/UI traffic shares the same access log and would drown
+        # inference error rates and "customer" tables.
+        dropped_ui = sum(1 for r in rows if not is_inference_path(r["path"]))
+        rows = [r for r in rows if is_inference_path(r["path"])]
 
         by_status, per_cust = {}, {}
         for r in rows:
@@ -387,7 +455,7 @@ class AccessTail:
                 key = "s%d" % r["status"]
                 by_status[key] = by_status.get(key, 0) + 1
 
-            name = r["cust"] or "(unauthenticated)"
+            name = access_identity(r)
             c = per_cust.setdefault(name, {
                 "customer": name, "requests": 0, "errors": 0, "in_bytes": 0,
                 "out_bytes": 0, "last_seen": 0.0, "ips": set(), "lat": [],
@@ -423,7 +491,7 @@ class AccessTail:
             })
         customers.sort(key=lambda c: c["requests"], reverse=True)
 
-        errors = [{"ts": r["ts"], "cust": r["cust"] or "(none)", "status": r["status"],
+        errors = [{"ts": r["ts"], "cust": access_identity(r), "status": r["status"],
                    "path": r["path"], "ip": r["ip"]}
                   for r in rows if r["status"] >= 400][-14:]
         errors.reverse()
@@ -444,6 +512,8 @@ class AccessTail:
             "recent_errors": errors,
             "rows_buffered": total_rows,
             "rotations": self.rotations,
+            "dropped_ui": dropped_ui,
+            "grouped_by": "client_ip",
         }
 
 
@@ -457,11 +527,11 @@ def failure_cause(status):
     """
     return {
         400: "400 body rejected by the engine",
-        401: "401 missing or invalid customer key",
-        403: "403 path not on the edge allowlist",
+        401: "401 missing or invalid key",
+        403: "403 forbidden",
         404: "404 unknown route",
-        413: "413 body over the 256 MB cap",
-        429: "429 per-customer rate or concurrency cap",
+        413: "413 body over the 64 MB cap",
+        429: "429 rate or concurrency cap",
         499: "499 client disconnected early",
     }.get(status, ("%dxx " % (status // 100)) + ("server error" if status >= 500
                                                  else "client error"))
@@ -511,16 +581,13 @@ class LogRollup:
         rows = []
         try:
             for line in self._iter_lines():
-                m = _ACCESS_RE.match(line.strip())
-                if not m:
+                row = parse_access_line(line)
+                if row is None or now - row["ts"] > longest:
                     continue
-                ts = AccessTail._parse_ts(m.group("ts"))
-                if ts is None or now - ts > longest:
+                if not is_inference_path(row["path"]):
                     continue
-                rows.append((ts, m.group("cust") or "(unauthenticated)",
-                             int(m.group("status")), m.group("path").split("?")[0],
-                             _to_float(m.group("req")), int(m.group("in")),
-                             int(m.group("out"))))
+                rows.append((row["ts"], access_identity(row), row["status"],
+                             row["path"], row["req_s"], row["in"], row["out"]))
         except Exception as e:
             with self.lock:
                 self.data = {"available": False,
@@ -721,18 +788,19 @@ class Monitor:
                 key = f.read().strip()
         except OSError:
             pass
+        headers = {}
         if key:
-            try:
-                req = urllib.request.Request(
-                    VLLM_BASE.rstrip("/") + "/v1/models",
-                    headers={"Authorization": "Bearer " + key})
-                with urllib.request.urlopen(req, timeout=5) as r:
-                    d = json.loads(r.read())
-                entry = (d.get("data") or [{}])[0]
-                facts["model"] = entry.get("id")
-                facts["max_model_len"] = entry.get("max_model_len")
-            except Exception as e:
-                facts["error"] = "models: %s" % type(e).__name__
+            headers["Authorization"] = "Bearer " + key
+        try:
+            req = urllib.request.Request(
+                VLLM_BASE.rstrip("/") + "/v1/models", headers=headers)
+            with urllib.request.urlopen(req, timeout=5) as r:
+                d = json.loads(r.read())
+            entry = (d.get("data") or [{}])[0]
+            facts["model"] = entry.get("id")
+            facts["max_model_len"] = entry.get("max_model_len")
+        except Exception as e:
+            facts["error"] = "models: %s" % type(e).__name__
 
         try:
             out = subprocess.run(["openssl", "x509", "-in", CERT_PATH,
@@ -754,10 +822,16 @@ class Monitor:
     # ---------- GPU ----------
 
     def sample_gpu(self):
-        use = self._rocm_csv(["rocm-smi", "--showuse", "--csv"], "GPU use (%)")
-        vram = self._rocm_csv(["rocm-smi", "--showmemuse", "--csv"],
-                              "GPU Memory Allocated (VRAM%)")
-        cards = sorted(set(list(use.keys()) + list(vram.keys())))
+        # Prefer the host amd-metrics-exporter. It is already bound on
+        # loopback and does not require opening /dev/kfd from this process.
+        use, vram, err = self._gpu_from_exporter()
+        if not use and not vram:
+            use = self._rocm_csv(["rocm-smi", "--showuse", "--csv"], "GPU use (%)")
+            vram = self._rocm_csv(["rocm-smi", "--showmemuse", "--csv"],
+                                  "GPU Memory Allocated (VRAM%)")
+            err = None
+        cards = sorted(set(list(use.keys()) + list(vram.keys())),
+                       key=lambda c: (len(c), c))
         per_card = [{"card": c, "use": use.get(c), "vram": vram.get(c)} for c in cards]
         uses = [v for v in use.values() if v is not None]
         vrams = [v for v in vram.values() if v is not None]
@@ -767,8 +841,41 @@ class Monitor:
                 "mean_use": sum(uses) / len(uses) if uses else None,
                 "mean_vram": sum(vrams) / len(vrams) if vrams else None,
                 "ts": time.time(),
-                "error": None if per_card else "rocm-smi returned no rows",
+                "error": None if per_card else (err or "no GPU samples"),
             }
+
+    def _gpu_from_exporter(self):
+        try:
+            with urllib.request.urlopen(GPU_METRICS_URL, timeout=4) as r:
+                body = r.read().decode("utf-8", "replace")
+        except Exception as e:
+            return {}, {}, "%s: %s" % (type(e).__name__, e)
+        use, used_mb, total_mb = {}, {}, {}
+        for line in body.splitlines():
+            if not line or line[0] == "#":
+                continue
+            m = _SAMPLE_RE.match(line)
+            if not m:
+                continue
+            name, value = m.group("name"), _to_float(m.group("value"))
+            if value is None:
+                continue
+            labels = dict(_LABEL_RE.findall(m.group("labels") or ""))
+            gid = labels.get("gpu_id")
+            if gid is None:
+                continue
+            card = "card%s" % gid
+            if name == "amd_gpu_gfx_activity":
+                use[card] = value
+            elif name == "amd_gpu_used_vram":
+                used_mb[card] = value
+            elif name == "amd_gpu_total_vram":
+                total_mb[card] = value
+        vram = {}
+        for card, tot in total_mb.items():
+            if tot and card in used_mb:
+                vram[card] = 100.0 * used_mb[card] / tot
+        return use, vram, None if (use or vram) else "exporter returned no GPU rows"
 
     @staticmethod
     def _rocm_csv(cmd, column):

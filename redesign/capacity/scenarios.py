@@ -1,13 +1,10 @@
-"""Optimisation scenarios from docs/SYSTEM-DESIGN.md 6.
-
-Adding a scenario means appending to REGISTRY. No existing code changes.
-"""
+"""Optimisation scenarios and their evaluated capacities."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .model import CapacityModel
+from .model import CapacityModel, PrefixSharing
 
 CPU_TIER_512GB = 512 * 10**9
 
@@ -52,15 +49,24 @@ class ScenarioResult:
     addressable_tokens: int
     multiplier: float
     max_concurrency: int
+    recommended_admission: int
     bytes_per_token: int
+    per_rank_resident_tokens: int
+    aggregate_unique_tokens: int
 
 
-def evaluate(base: CapacityModel, mean_tokens: int) -> list[ScenarioResult]:
+def evaluate(
+    base: CapacityModel,
+    mean_tokens: int,
+    observed_peak: int = 0,
+    sharing: PrefixSharing | None = None,
+) -> list[ScenarioResult]:
     baseline = base.addressable_tokens()
     results = []
     for scenario in REGISTRY:
         model = scenario.apply(base)
         addressable = model.addressable_tokens()
+        floor = model.max_concurrency(mean_tokens, sharing=None)
         results.append(
             ScenarioResult(
                 scenario=scenario,
@@ -68,8 +74,13 @@ def evaluate(base: CapacityModel, mean_tokens: int) -> list[ScenarioResult]:
                 tier_tokens=model.tier_tokens,
                 addressable_tokens=addressable,
                 multiplier=addressable / baseline,
-                max_concurrency=model.max_concurrency(mean_tokens),
+                max_concurrency=floor,
+                recommended_admission=model.recommended_admission(
+                    mean_tokens, observed_peak, sharing
+                ),
                 bytes_per_token=model.bytes_per_token,
+                per_rank_resident_tokens=model.per_rank_resident_tokens(),
+                aggregate_unique_tokens=model.aggregate_unique_tokens(),
             )
         )
     return results

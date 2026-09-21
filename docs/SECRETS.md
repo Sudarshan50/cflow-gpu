@@ -1,7 +1,9 @@
 # SECRETS — credential inventory and handling
 
-Every credential on this box: where it lives, what it opens, how to rotate it,
-and what to do when one leaks.
+**Live tenancy is LiteLLM, not `customers.tsv` / `k3-limits.inc`.** Do not
+regenerate an Authorization swap. Portal keys are minted in the LiteLLM UI.
+This inventory still lists the pre-redesign two-tier nginx files so they are
+not treated as lost; they are not the serving path. See `docs/SYSTEM-DESIGN.md` §4.
 
 **No real credential value appears in this document, and none should ever
 appear in any other.** Refer to credentials by file path. Formats are shown as

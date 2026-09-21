@@ -158,6 +158,7 @@ class StreamingTest(unittest.TestCase):
             engine_url=f"http://127.0.0.1:{cls.engine.server_address[1]}",
             max_model_len=WINDOW, concurrency_ceiling=96,
             trace_path=None, model_path=None, send_priority=False,
+            snapshot_ttl=0.0,
         )
         cls.gateway = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         cls.gateway.daemon_threads = True

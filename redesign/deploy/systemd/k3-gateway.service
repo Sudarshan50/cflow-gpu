@@ -1,0 +1,29 @@
+[Unit]
+Description=Kimi-K3 backpressure gateway
+After=docker.service k3.service
+Requires=docker.service
+Wants=k3.service
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/usr/local/lib/k3
+Environment=K3_ENGINE_URL=http://127.0.0.1:8001
+Environment=K3_MAX_MODEL_LEN=262144
+Environment=K3_ADMISSION_CEILING=96
+Environment=K3_SEND_PRIORITY=1
+Environment=K3_TRACE_PATH=/scratch/traces/requests.jsonl
+Environment=K3_OFFBOX_URL=
+Environment=K3_OFFBOX_API_KEY=
+Environment=K3_OFFBOX_MODEL=offbox
+Environment=K3_BATCH_CUSTOMERS=
+EnvironmentFile=-/scratch/deploy/offbox.env
+ExecStartPre=-/usr/bin/docker rm -f k3-gateway
+ExecStart=/usr/local/lib/k3/redesign/deploy/containers/run.sh k3-gateway \
+  python3 -m redesign.gateway.server --port 8002
+ExecStop=/usr/bin/docker stop -t 10 k3-gateway
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

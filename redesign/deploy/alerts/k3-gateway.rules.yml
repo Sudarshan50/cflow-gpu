@@ -1,0 +1,35 @@
+# Prometheus rules over the gateway /metrics surface (register item E2).
+# Nothing consumes these yet -- ship the rules so the first scrape has alerts
+# rather than inventing them during an incident.
+groups:
+  - name: k3-gateway
+    rules:
+      - alert: K3GatewayP0TTFTRegression
+        expr: k3_gateway_ttft_seconds{class="P0-interactive",quantile="0.95"} > 3
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: P0 TTFT p95 exceeded the 3s target (G2 pass/fail).
+
+      - alert: K3GatewayShedding
+        expr: increase(k3_gateway_requests_total{outcome="reject_shed"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Backpressure is shedding a class; the engine is distressed.
+
+      - alert: K3GatewayEngineErrors
+        expr: increase(k3_gateway_engine_errors_total[5m]) > 5
+        labels:
+          severity: page
+        annotations:
+          summary: Engine errors on the gateway hot path.
+
+      - alert: K3GatewayOffboxFallback
+        expr: increase(k3_gateway_offbox_fallback_total[5m]) > 0
+        labels:
+          severity: ticket
+        annotations:
+          summary: E1 fallback is serving P0/P1; K3 is unreachable.

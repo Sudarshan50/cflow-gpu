@@ -1,0 +1,11 @@
+[Unit]
+Description=Kimi-K3 gateway trace analysis (Z3)
+After=docker.service k3-gateway.service
+
+[Service]
+Type=oneshot
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/usr/local/lib/k3
+ExecStartPre=-/usr/bin/docker rm -f k3-traffic
+ExecStart=/usr/local/lib/k3/redesign/deploy/containers/run.sh k3-traffic \
+  /usr/local/lib/k3/redesign/deploy/containers/traffic.sh

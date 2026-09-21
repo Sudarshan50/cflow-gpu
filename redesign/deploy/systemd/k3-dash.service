@@ -1,0 +1,24 @@
+[Unit]
+Description=Kimi-K3 dashboard on host :8080
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+Environment=DASH_ADDR=0.0.0.0
+Environment=DASH_PORT=8080
+Environment=VLLM_BASE_URL=http://127.0.0.1:8001
+Environment=PUBLIC_URL=https://api.cflowx.in/v1
+Environment=ACCESS_LOG=/var/log/k3/usage.log
+Environment=GPU_METRICS_URL=http://127.0.0.1:5000/metrics
+Environment=CERT_PATH=/etc/letsencrypt/live/api.cflowx.in/fullchain.pem
+Environment=API_KEY_FILE=/scratch/deploy/api-key.txt
+ExecStartPre=-/usr/bin/docker rm -f k3-dash
+ExecStart=/usr/local/lib/k3/redesign/deploy/containers/dash-run.sh
+ExecStop=/usr/bin/docker stop -t 5 k3-dash
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

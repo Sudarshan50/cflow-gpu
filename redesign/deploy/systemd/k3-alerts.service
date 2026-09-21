@@ -1,0 +1,22 @@
+[Unit]
+Description=Kimi-K3 gateway SLO scrape (E2)
+After=docker.service k3-gateway.service
+Wants=k3-gateway.service
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/usr/local/lib/k3
+ExecStartPre=-/usr/bin/docker rm -f k3-alerts
+ExecStart=/usr/local/lib/k3/redesign/deploy/containers/run.sh k3-alerts \
+  python3 -m redesign.alerts \
+  --metrics-url http://127.0.0.1:8002/metrics \
+  --rules /usr/local/lib/k3/redesign/deploy/alerts/k3-gateway.rules.yml \
+  --state /scratch/deploy-state/alerts/last.json \
+  --interval 30
+ExecStop=/usr/bin/docker stop -t 5 k3-alerts
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -24,8 +24,8 @@ secret-scan: ## verify no credential is tracked, staged, or in git history
 	@bash ./secret-scan.sh
 verify: ## security assertions against the live edge (auth + path allowlist)
 	@bash ./verify-auth.sh
-deploy: ## full idempotent deployment; ./deploy.sh --help for single stages
-	@bash ./deploy.sh
+deploy: ## production deployer (SYSTEM-DESIGN §4)
+	@bash ./redesign/deploy/deploy.sh
 plan:  ## show what deploy would do, without doing it
-	@bash ./deploy.sh --dry-run
+	@bash ./redesign/deploy/deploy.sh --dry-run
 .PHONY: help gate quick health cache logs sizes secret-scan verify deploy plan

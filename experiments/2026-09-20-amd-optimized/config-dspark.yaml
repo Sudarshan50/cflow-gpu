@@ -1,0 +1,37 @@
+# Tested alternative, disabled in production: base plus speculative-config.
+# Supply the same local target snapshot as the positional `vllm serve` argument.
+served-model-name:
+  - FW-Kimi-K3
+  - kimi-k3
+  - moonshotai/Kimi-K3
+host: 127.0.0.1
+port: 8001
+trust-remote-code: true
+
+tensor-parallel-size: 8
+no-enable-expert-parallel: true
+load-format: auto
+mm-encoder-tp-mode: data
+kv-cache-dtype: auto
+enable-prefix-caching: true
+max-num-seqs: 64
+max-num-batched-tokens: 4096
+gpu-memory-utilization: 0.88
+
+max-model-len: 262144
+scheduling-policy: priority
+enable-prompt-tokens-details: true
+
+reasoning-parser: kimi_k3
+tool-call-parser: kimi_k3
+enable-auto-tool-choice: true
+no-enable-log-requests: true
+
+# AMD's four-key spec configuration; use the pinned local Inferact snapshot.
+# Sampling/rejection defaults require inspection of the exact image. Never add
+# synthetic acceptance settings to this candidate.
+speculative-config:
+  method: dspark
+  model: /hf/hub/models--Inferact--Kimi-K3-DSpark/snapshots/cf6b8244620e7ea4b0651d214f28e89eac75bed6
+  num_speculative_tokens: 7
+  attention_backend: ROCM_AITER_MLA

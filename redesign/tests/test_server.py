@@ -5,6 +5,7 @@ Proves the wiring the deployer depends on before any of it reaches a GPU.
 
 from __future__ import annotations
 
+import base64
 import json
 import threading
 import unittest
@@ -97,6 +98,7 @@ class ServerTestCase(unittest.TestCase):
             trace_path=None,
             model_path=None,
             send_priority=True,
+            snapshot_ttl=0.0,
         )
         cls.gateway = _serve(Handler)
         cls.base = f"http://127.0.0.1:{cls.gateway.server_address[1]}"
@@ -162,10 +164,10 @@ class ClassificationTest(ServerTestCase):
         _, _, headers = _post(f"{self.base}/v1/chat/completions", self._chat("hi"))
         self.assertEqual(headers["x-k3-class"], "P1-short-chat")
 
-    def test_tools_lift_a_short_prompt_to_interactive(self):
+    def test_tools_make_a_short_prompt_agentic(self):
         payload = self._chat("hi", tools=[{"type": "function", "function": {"name": "f"}}])
         _, _, headers = _post(f"{self.base}/v1/chat/completions", payload)
-        self.assertEqual(headers["x-k3-class"], "P0-interactive")
+        self.assertEqual(headers["x-k3-class"], "P2-agentic")
 
     def test_a_batch_header_wins_over_length(self):
         _, _, headers = _post(
@@ -175,11 +177,31 @@ class ClassificationTest(ServerTestCase):
         self.assertEqual(headers["x-k3-class"], "P3-batch")
 
 
+class CompletionTokensAndReplicasTest(ServerTestCase):
+    def test_max_completion_tokens_is_clamped(self):
+        status, _, _ = _post(
+            f"{self.base}/v1/chat/completions",
+            self._chat("hello", max_completion_tokens=128_000),
+        )
+        self.assertEqual(status, 200)
+        forwarded = MockEngine.received[-1]
+        self.assertLess(forwarded["max_tokens"], 128_000)
+        self.assertLess(forwarded["max_completion_tokens"], 128_000)
+
+    def test_n_greater_than_one_is_refused(self):
+        status, body, _ = _post(
+            f"{self.base}/v1/chat/completions",
+            self._chat("hello", n=4),
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("n/best_of", json.loads(body)["error"]["message"])
+
+
 class PriorityTest(ServerTestCase):
     def test_priority_is_attached_for_the_engine_scheduler(self):
         payload = self._chat("hi", tools=[{"type": "function", "function": {"name": "f"}}])
         _post(f"{self.base}/v1/chat/completions", payload)
-        self.assertEqual(MockEngine.received[-1]["priority"], 0)
+        self.assertEqual(MockEngine.received[-1]["priority"], 2)
 
     def test_batch_traffic_carries_the_lowest_priority(self):
         _post(f"{self.base}/v1/chat/completions", self._chat("hi"),
@@ -199,9 +221,17 @@ class BackpressureTest(ServerTestCase):
 
     def test_a_distressed_engine_still_serves_interactive(self):
         MockEngine.kv_usage = 0.99
-        payload = self._chat("hi", tools=[{"type": "function", "function": {"name": "f"}}])
-        status, _, _ = _post(f"{self.base}/v1/chat/completions", payload)
+        status, _, _ = _post(
+            f"{self.base}/v1/chat/completions", self._chat("x" * 40_000)
+        )
         self.assertEqual(status, 200)
+
+    def test_a_distressed_engine_sheds_agentic_traffic(self):
+        MockEngine.kv_usage = 0.99
+        payload = self._chat("hi", tools=[{"type": "function", "function": {"name": "f"}}])
+        status, _, headers = _post(f"{self.base}/v1/chat/completions", payload)
+        self.assertEqual(status, 503)
+        self.assertIn("Retry-After", headers)
 
 
 class MetricsTest(ServerTestCase):
@@ -253,6 +283,59 @@ class EstimatorTest(unittest.TestCase):
     def test_a_zero_divisor_is_rejected(self):
         with self.assertRaises(ValueError):
             tokens.HeuristicEstimator(chars_per_token=0)
+
+    def test_cjk_is_counted_near_one_token_per_character(self):
+        """G-8: 250k CJK chars used to estimate 71k and the engine 400ed."""
+        payload = {"messages": [{"role": "user", "content": "汉" * 250_000}]}
+        self.assertGreaterEqual(self.estimator.estimate(payload), 250_000)
+
+    def test_an_image_part_is_not_seven_tokens(self):
+        payload = {"messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * 100}},
+        ]}]}
+        self.assertGreaterEqual(self.estimator.estimate(payload), tokens.IMAGE_TOKENS)
+
+    def test_a_large_png_is_billed_from_its_dimensions(self):
+        """1920×1080 at 192 px/token is 10,800, above the 4,096 floor."""
+        header = (
+            b"\x89PNG\r\n\x1a\n"
+            + (13).to_bytes(4, "big")
+            + b"IHDR"
+            + (1920).to_bytes(4, "big")
+            + (1080).to_bytes(4, "big")
+        )
+        url = "data:image/png;base64," + base64.b64encode(header).decode("ascii")
+        payload = {"messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": url}},
+        ]}]}
+        self.assertGreaterEqual(
+            self.estimator.estimate(payload),
+            tokens.tokens_for_image_size(1920, 1080),
+        )
+
+    def test_tool_calls_on_a_message_count(self):
+        base = {"messages": [{"role": "assistant", "content": ""}]}
+        with_calls = {"messages": [{"role": "assistant", "content": "",
+                                    "tool_calls": [{"function": {"name": "x" * 200}}]}]}
+        self.assertGreater(
+            self.estimator.estimate(with_calls), self.estimator.estimate(base)
+        )
+
+    def test_integer_token_id_prompts_count(self):
+        payload = {"prompt": list(range(500))}
+        self.assertGreaterEqual(self.estimator.estimate(payload), 500)
+
+    def test_extract_text_returns_prompt_parts(self):
+        parts = tokens.extract_text({"messages": [{"role": "user", "content": [
+            {"type": "text", "text": "hi"},
+            {"type": "image_url", "image_url": {"url": "data:,"}},
+        ]}]})
+        self.assertIsInstance(parts, tokens.PromptParts)
+        self.assertIn("hi", parts.text)
+        self.assertEqual(parts.messages, 1)
+        self.assertEqual(parts.images, 1)
+        ids = tokens.extract_text({"prompt": list(range(7))})
+        self.assertEqual(ids.token_ids, 7)
 
 
 class RegistryTest(unittest.TestCase):

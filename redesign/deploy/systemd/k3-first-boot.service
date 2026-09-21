@@ -1,0 +1,21 @@
+[Unit]
+Description=Kimi-K3 first-boot B0/Z5 checks
+After=docker.service k3.service k3-gateway.service
+Wants=k3.service k3-gateway.service
+
+[Service]
+Type=oneshot
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/usr/local/lib/k3
+Environment=K3_ENGINE_URL=http://127.0.0.1:8001
+Environment=K3_GATE_MODEL=FW-Kimi-K3
+Environment=K3_STATE_DIR=/scratch/deploy-state
+Environment=K3_REPO_ROOT=/usr/local/lib/k3
+Environment=K3_GATE_TIERS=1
+ExecStartPre=-/usr/bin/docker rm -f k3-first-boot
+ExecStart=/usr/local/lib/k3/redesign/deploy/containers/run.sh k3-first-boot \
+  /usr/local/lib/k3/redesign/deploy/first-boot.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

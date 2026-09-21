@@ -8,32 +8,19 @@ so the rule for this directory is:
 > No GPU session without a pre-written question, a pre-written pass/fail, and a
 > rollback. "Boot it and see" is how GPU budgets disappear.
 
-## Layout
+## Layout (SYSTEM-DESIGN §4)
 
 ```
-capacity/     KV capacity model -- the arithmetic the plan rests on
-  model.py        domain: Architecture, Parallelism, Precision, CapacityModel
-  deployment.py   sourced constants for this deployment
-  scenarios.py    optimisation scenarios; extend by appending to REGISTRY
-  hypothesis.py   replication hypothesis test
-  report.py       report assembly, no I/O
-  renderers.py    TextRenderer / JsonRenderer behind a Renderer protocol
-probe/        static engine capability probes
-  base.py         EngineProbe template, ProbeResult
-  engines.py      VllmProbe, SglangProbe; add an engine by subclassing
-  renderers.py    TextRenderer / JsonRenderer
-traffic/      what the surviving edge logs say about production
-  records.py      value types for a traffic window
-  sources.py      TrafficSource protocol; ProdStatsSource
-  analysis.py     Check registry; add a check by subclassing
-gateway/      tenancy, backpressure and trace capture
-  models.py       RequestEnvelope, Decision, EngineSnapshot, ClampResult
-  classification.py  ordered ClassRule registry, first match wins
-  clamping.py     TokenClamp -- register item D2
-  backpressure.py CircuitBreaker, ClassBudget; fails open
-  policy.py       composes the above into one Decision
-  capture.py      TraceSink protocol; JsonlSink, MemorySink
-tests/        unittest suite over all four
+edge/         nginx pass-through Bearer map — transport + attribution only
+tenancy/      LiteLLM who/how much — class, clamp, no customers.tsv
+gateway/      backpressure — when to refuse; engine priority stamp
+              (serving = sessions.py + deploy/profiles + live engine config)
+deploy/       systemd + LiteLLM start; no Authorization swap
+probe/        cache_salt / offload / engine capability
+capacity/     KV arithmetic (planning, not the live request path)
+alerts/       scrape rules
+distill/      parked P3 lane
+tests/        unittest suite
 ```
 
 ## Run
@@ -53,6 +40,9 @@ python3 -m redesign.traffic --window 24h
 python3 -m redesign.gateway                  # dry-run the policy, no engine
 python3 -m redesign.gateway --ceiling 96
 
+python3 -m redesign.sessions                 # Z6 written pass/fail
+python3 -m redesign.distill --help           # P3 teacher-generation lane
+
 python3 -m unittest discover -s redesign/tests -t .
 ```
 
@@ -66,8 +56,8 @@ No third-party dependencies. Python 3.10+.
 | **Z2** | `probe/`, `Z2-FINDINGS.md` | done | Is de-duplication available for a hybrid KDA+MLA model on ROCm, and on which engine? |
 | **Z1/Z3** | `traffic/` | done | What do the surviving edge logs show? (No further log data exists — it died with the box.) |
 | **Z4** | `gateway/` | done | Classification, `max_tokens` clamp, backpressure, trace capture. Carries Z3's capture too. |
-| **Z5** | — | todo | Extend the correctness gate to catch quantized-KV silent garbage. |
-| **Z6** | — | todo | Pre-registered GPU session definitions. |
+| **Z5** | `gate/` | done | Quantised-KV silent-garbage gate, three tiers. |
+| **Z6** | `sessions.py` | done | Written pass/fail per GPU session. |
 
 ## Results so far
 
@@ -80,10 +70,10 @@ predicted if DE-DUPED     18,952,040  (error 725.7%)
 VERDICT                   REPLICATED
 ```
 
-The model's sustainable concurrency at the observed mean prompt length is **75
-sequences**; production steady state is 68–76 in system. Configured
-`max-num-seqs` is **512**, a 6.8× overcommit — which is where the 4–9/min
-preemptions come from.
+The model's **zero-sharing floor** at the observed mean prompt length is **75
+sequences**. That is not an admission number: the box already sustained **427**
+concurrent, and K3-DEPLOYMENT.md:526 says the no-sharing estimate is pessimistic
+by ~5×. `recommended_admission` is `max(floor, 427)`.
 
 | Scenario | Resident | vs today | Admission ceiling |
 |---|---|---|---|

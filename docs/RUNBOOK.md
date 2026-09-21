@@ -1,7 +1,8 @@
 # RUNBOOK — day-2 operations, Kimi-K3 on 8x MI355X
 
-Task-oriented operations for `https://cflox.store/v1`. If you are on call and
-did not build this, start at §9 (incident playbooks) and come back for context.
+**Live hostname is `https://api.cflowx.in/v1`.** Tenancy is LiteLLM virtual
+keys, not `customers.tsv`. For the request path, `docs/SYSTEM-DESIGN.md` §4
+and `redesign/STATUS.md` win over the nginx-swap playbooks below.
 
 This document covers **running** the system. It does not cover:
 

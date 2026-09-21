@@ -1,8 +1,9 @@
 # Architecture — Kimi-K3 on 8x MI355X
 
-How the pieces fit, and why each one is shaped the way it is. The intended
-reader is someone about to change this system and needing to know what they
-will break.
+**Superseded for the live request path.** `docs/SYSTEM-DESIGN.md` §4 is the
+production stack: nginx (Bearer pass-through) → LiteLLM (tenancy) →
+backpressure gateway → engine. This file describes the earlier nginx
+allowlist + Authorization-swap edge. Do not reinstall that path.
 
 Scope: this file explains **structure and rationale**. It does not repeat
 measurements, tuning history, or failure forensics — those are in

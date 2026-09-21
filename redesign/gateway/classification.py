@@ -31,7 +31,10 @@ SHORT_CHAT = TrafficClass("P1-short-chat", Priority.SHORT_CHAT, 4_096, 1.0, 0.0,
 LONG_CONTEXT = TrafficClass("P2-long-context", Priority.LONG_CONTEXT, 16_384, 60.0, 0.25)
 BATCH = TrafficClass("P3-batch", Priority.BATCH, 32_768, None, 0.25)
 
-ALL_CLASSES = (INTERACTIVE, SHORT_CHAT, LONG_CONTEXT, BATCH)
+# Tool/vision requests use LONG_CONTEXT priority so overload protection can shed them.
+AGENTIC = TrafficClass("P2-agentic", Priority.LONG_CONTEXT, 512, 15.0, 0.45)
+
+ALL_CLASSES = (INTERACTIVE, SHORT_CHAT, LONG_CONTEXT, BATCH, AGENTIC)
 
 
 class ClassRule(abc.ABC):
@@ -47,6 +50,13 @@ class BatchHintRule(ClassRule):
 
     def matches(self, envelope: RequestEnvelope) -> bool:
         return envelope.batch_hint
+
+
+class AgenticRule(ClassRule):
+    """Tools or images, at any prompt length."""
+
+    def matches(self, envelope: RequestEnvelope) -> bool:
+        return envelope.has_tools or envelope.has_images
 
 
 class ShortChatRule(ClassRule):
@@ -69,6 +79,7 @@ class LongContextRule(ClassRule):
 
 DEFAULT_RULES: tuple[ClassRule, ...] = (
     BatchHintRule(BATCH),
+    AgenticRule(AGENTIC),
     ShortChatRule(SHORT_CHAT),
     InteractiveRule(INTERACTIVE),
     LongContextRule(LONG_CONTEXT),

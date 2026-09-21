@@ -12,6 +12,7 @@ from redesign.gateway.backpressure import (
 )
 from redesign.gateway.capture import MemorySink, TraceRecorder
 from redesign.gateway.classification import (
+    AGENTIC,
     ALL_CLASSES,
     BATCH,
     INTERACTIVE,
@@ -42,9 +43,17 @@ class ClassifierTest(unittest.TestCase):
     def test_a_short_toolless_prompt_is_short_chat(self):
         self.assertIs(self.classifier.classify(_envelope(prompt_tokens=4_000)), SHORT_CHAT)
 
-    def test_tools_lift_a_short_prompt_to_interactive(self):
+    def test_tools_make_a_short_prompt_agentic_not_interactive(self):
         envelope = _envelope(prompt_tokens=4_000, has_tools=True)
-        self.assertIs(self.classifier.classify(envelope), INTERACTIVE)
+        self.assertIs(self.classifier.classify(envelope), AGENTIC)
+
+    def test_an_image_turn_is_agentic_at_any_length(self):
+        envelope = _envelope(prompt_tokens=4_000, has_images=True)
+        self.assertIs(self.classifier.classify(envelope), AGENTIC)
+
+    def test_an_explicit_batch_hint_still_beats_the_agentic_rule(self):
+        envelope = _envelope(prompt_tokens=4_000, has_tools=True, batch_hint=True)
+        self.assertIs(self.classifier.classify(envelope), BATCH)
 
     def test_a_medium_prompt_is_interactive(self):
         self.assertIs(self.classifier.classify(_envelope(prompt_tokens=20_000)), INTERACTIVE)
@@ -106,6 +115,14 @@ class CircuitBreakerTest(unittest.TestCase):
     def test_kv_pressure_sheds_batch(self):
         self.assertTrue(self._breaker(kv_usage=0.98).should_shed(BATCH).distressed)
 
+    def test_a_full_pool_with_a_queue_is_distress_before_preemption_starts(self):
+        breaker = self._breaker(kv_usage=0.96, running=74, waiting=21)
+        self.assertTrue(breaker.should_shed(LONG_CONTEXT).distressed)
+
+    def test_a_full_pool_with_no_queue_is_not_yet_distress(self):
+        breaker = self._breaker(kv_usage=0.93, running=74, waiting=0)
+        self.assertFalse(breaker.should_shed(LONG_CONTEXT).distressed)
+
     def test_preemptions_alone_are_distress(self):
         breaker = self._breaker(preemptions_per_minute=4.0)
         self.assertTrue(breaker.should_shed(LONG_CONTEXT).distressed)
@@ -159,9 +176,17 @@ class PolicyTest(unittest.TestCase):
         self.policy = build_default(max_model_len=WINDOW, concurrency_ceiling=96)
 
     def test_a_normal_request_is_admitted_with_a_priority(self):
-        decision = self.policy.decide(_envelope(prompt_tokens=20_000, has_tools=True))
+        decision = self.policy.decide(_envelope(prompt_tokens=20_000))
         self.assertTrue(decision.admitted)
         self.assertIs(decision.priority, Priority.INTERACTIVE)
+
+    def test_an_agentic_turn_is_capped_at_the_agentic_ceiling(self):
+        decision = self.policy.decide(
+            _envelope(prompt_tokens=20_000, has_tools=True, requested_max_tokens=8_192)
+        )
+        self.assertTrue(decision.admitted)
+        self.assertEqual(decision.traffic_class, AGENTIC.name)
+        self.assertEqual(decision.clamp.granted, AGENTIC.max_output_tokens)
 
     def test_a_long_prompt_with_a_fixed_max_tokens_is_rescued(self):
         decision = self.policy.decide(
@@ -213,8 +238,21 @@ class PolicyTest(unittest.TestCase):
                 StaticHealthSource(EngineSnapshot(0.99, 60, 30, 5.0))
             ),
         )
-        decision = policy.decide(_envelope(prompt_tokens=20_000, has_tools=True))
+        decision = policy.decide(_envelope(prompt_tokens=20_000))
         self.assertTrue(decision.admitted)
+
+    def test_a_distressed_engine_sheds_agentic_traffic(self):
+        """The live regression: `tools` made these P0, which is never shed."""
+        policy = GatewayPolicy(
+            classifier=Classifier(),
+            clamp=TokenClamp(max_model_len=WINDOW),
+            budget=ClassBudget.from_classes(96, ALL_CLASSES),
+            breaker=CircuitBreaker(
+                StaticHealthSource(EngineSnapshot(0.99, 60, 30, 5.0))
+            ),
+        )
+        decision = policy.decide(_envelope(prompt_tokens=20_000, has_tools=True))
+        self.assertIs(decision.outcome, Outcome.REJECT_SHED)
 
     def test_budget_exhaustion_returns_retry_after(self):
         envelope = _envelope(prompt_tokens=100_000)

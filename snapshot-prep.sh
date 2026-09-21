@@ -14,7 +14,7 @@ cd "$(dirname "$(readlink -f "$0")")"
 log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
 if [ "${1:-}" = --resume ]; then
-  systemctl start k3.service k3dash.service nginx
+  systemctl start k3.service k3-gateway.service k3-litellm.service nginx
   log "services starting; the engine needs ~4 min to load weights"
   log "verify with: ./verify-auth.sh"
   exit 0
@@ -23,7 +23,7 @@ fi
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
 
 log "stopping writers"
-systemctl stop k3dash.service k3.service || true
+systemctl stop k3.service || true
 docker ps -q --filter name=k3 | xargs -r docker stop -t 30 >/dev/null 2>&1 || true
 
 log "flushing to disk"

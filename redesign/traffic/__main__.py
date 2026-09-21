@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .analysis import CRITICAL, analyse
 from .records import TrafficWindow
-from .sources import ProdStatsSource
+from .sources import GatewayTraceSource, ProdStatsSource
 
 DEFAULT_STATS = Path("eval/runs/20260919T145955Z-baseline/prod_stats.json")
 WIDTH = 78
@@ -57,14 +57,23 @@ def _render_text(window: TrafficWindow, findings) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="redesign.traffic", description=__doc__)
     parser.add_argument("--stats", type=Path, default=DEFAULT_STATS)
+    parser.add_argument(
+        "--traces",
+        type=Path,
+        help="gateway capture jsonl (Z3). When set, --stats is ignored.",
+    )
     parser.add_argument("--window", default="1h")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
-    if not args.stats.exists():
-        parser.error(f"no such file: {args.stats}")
-
-    window = ProdStatsSource(args.stats, args.window).load()
+    if args.traces:
+        if not args.traces.exists():
+            parser.error(f"no such file: {args.traces}")
+        window = GatewayTraceSource(args.traces, args.window).load()
+    else:
+        if not args.stats.exists():
+            parser.error(f"no such file: {args.stats}")
+        window = ProdStatsSource(args.stats, args.window).load()
     findings = analyse(window)
 
     if args.json:

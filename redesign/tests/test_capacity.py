@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import unittest
 
-from redesign.capacity import deployment, hypothesis, report, scenarios
+from redesign.capacity import deployment, g2, hypothesis, report, scenarios
 from redesign.capacity.model import (
     GiB,
     KiB,
@@ -17,6 +17,7 @@ from redesign.capacity.model import (
     CapacityModel,
     Parallelism,
     Precision,
+    PrefixSharing,
     PromptDistribution,
 )
 
@@ -126,18 +127,32 @@ class ScenarioTest(unittest.TestCase):
 
 
 class ProductionCrossCheckTest(unittest.TestCase):
-    """The model must reproduce what the box actually does."""
+    """The model must stay honest about what it does not know."""
 
     def setUp(self):
         self.report = report.build()
 
-    def test_modelled_concurrency_matches_observed_steady_state(self):
-        low = deployment.OBSERVED_RUNNING[0] + deployment.OBSERVED_QUEUED[0]
-        high = deployment.OBSERVED_RUNNING[1] + deployment.OBSERVED_QUEUED[1]
-        self.assertGreaterEqual(self.report.modelled_concurrency, low - 10)
-        self.assertLessEqual(self.report.modelled_concurrency, high + 10)
+    def test_the_zero_sharing_floor_is_in_the_seventy_range(self):
+        # ~75 under no sharing at the observed mean. A floor, not a target.
+        self.assertGreater(self.report.modelled_concurrency, 50)
+        self.assertLess(self.report.modelled_concurrency, 100)
 
-    def test_configured_ceiling_is_a_large_overcommit(self):
+    def test_admission_never_cuts_below_the_observed_peak(self):
+        """The withdrawn B1 advice. 75 as a live ceiling risked a 5x cut."""
+        self.assertGreaterEqual(
+            self.report.recommended_admission, deployment.OBSERVED_PEAK_CONCURRENCY
+        )
+
+    def test_queued_requests_are_not_added_into_the_floor(self):
+        """AUDIT 1.1: queued requests hold no KV. The old test added them."""
+        running_hi = deployment.OBSERVED_RUNNING[1]
+        self.assertGreater(self.report.modelled_concurrency, running_hi)
+
+    def test_prefix_sharing_is_present_and_unfitted(self):
+        self.assertFalse(deployment.PREFIX_SHARING_MODELLED)
+        self.assertIsNone(deployment.PREFIX_SHARING.unique_fraction)
+
+    def test_configured_ceiling_exceeds_the_zero_sharing_floor(self):
         self.assertGreater(self.report.overcommit_factor, 5.0)
 
 
@@ -164,6 +179,78 @@ class AllocationTest(unittest.TestCase):
             Allocation(hbm_bytes=1 * GiB),
         )
         self.assertEqual(model.resident_tokens(1_000), 0)
+
+
+class PerRankTest(unittest.TestCase):
+    """AUDIT 1.2 / 1.4: the worker log line is per-rank, always ~2.3M."""
+
+    def setUp(self):
+        self.model = deployment.production_model()
+
+    def test_per_rank_bytes_ignore_replication(self):
+        self.assertEqual(self.model.bytes_per_token_per_rank, 27 * KiB)
+        self.assertEqual(
+            self.model.with_variant(deduplicated=True).bytes_per_token_per_rank,
+            27 * KiB,
+        )
+
+    def test_per_rank_pool_does_not_grow_under_dedup(self):
+        baseline = self.model.per_rank_resident_tokens()
+        deduped = self.model.with_variant(deduplicated=True).per_rank_resident_tokens()
+        self.assertEqual(baseline, deduped)
+
+    def test_aggregate_unique_grows_by_tp_size_when_deduped(self):
+        replicated = self.model.aggregate_unique_tokens()
+        deduped = self.model.with_variant(deduplicated=True).aggregate_unique_tokens()
+        self.assertAlmostEqual(deduped / replicated, 8.0, places=1)
+
+    def test_implied_kib_matches_the_documented_27(self):
+        result = hypothesis.evaluate(self.model, deployment.REPORTED_POOL_TOKENS)
+        self.assertAlmostEqual(result.implied_kib_per_token, 27.9, places=1)
+        self.assertEqual(result.scope, "per-rank")
+
+    def test_known_observations_are_not_all_a_fit(self):
+        """The 27 KiB constant fits one of three (available, pool) pairs."""
+        fits = hypothesis.fit_known_observations(self.model)
+        self.assertEqual(len(fits), 3)
+        errors = [f.error for f in fits]
+        self.assertGreater(max(errors), 0.3)
+        self.assertLess(min(errors), 0.05)
+
+
+class PrefixSharingTest(unittest.TestCase):
+    def test_unknown_sharing_bills_full_price(self):
+        self.assertEqual(PrefixSharing().billed_tokens(10_000), 10_000)
+
+    def test_a_fifth_unique_is_5x_concurrency(self):
+        model = deployment.production_model()
+        floor = model.max_concurrency(30_000)
+        shared = model.max_concurrency(30_000, PrefixSharing(0.2))
+        self.assertGreater(shared / floor, 4.0)
+
+    def test_an_invalid_fraction_is_rejected(self):
+        with self.assertRaises(ValueError):
+            PrefixSharing(0.0)
+        with self.assertRaises(ValueError):
+            PrefixSharing(1.5)
+
+    def test_recommended_admission_uses_the_observed_peak_when_unfitted(self):
+        model = deployment.production_model()
+        admit = model.recommended_admission(30_000, observed_peak=427)
+        self.assertEqual(admit, 427)
+
+    def test_g2_pass_is_on_the_aggregate_not_one_rank(self):
+        """AUDIT 1.4: eight ranks at 2.3M is a win, not a failure."""
+        per_rank = [2_300_000] * 8
+        expected_per_rank = deployment.production_model().per_rank_resident_tokens()
+        expected_agg = (
+            deployment.production_model()
+            .with_variant(deduplicated=True)
+            .aggregate_unique_tokens()
+        )
+        verdict = g2.interpret_g2_pools(per_rank, expected_per_rank, expected_agg)
+        self.assertTrue(verdict.passed)
+        self.assertLess(max(verdict.per_rank), 10_000_000)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@
 #   weights    fetch the model, resumable, idempotent
 #   engine     validate the profile against the image, render unit, start
 #   gateway    tenancy + backpressure + trace capture
+#   ops        first-boot B0/Z5, D3 distill, E2 scrape, Z3 traffic timer
 #   keys       rebuild the per-customer auth layer from the customer table
 #   edge       nginx, TLS, default-deny
 #   verify     liveness, correctness gate, capacity check against the model
@@ -32,7 +33,7 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly PROFILE_DIR="${SCRIPT_DIR}/profiles"
 
-readonly ALL_STAGES=(preflight host weights engine gateway edge keys verify)
+readonly ALL_STAGES=(preflight host weights engine gateway ops edge keys verify)
 
 # --- Deployment constants ----------------------------------------------------
 readonly MODEL_REPO="${MODEL_REPO:-moonshotai/Kimi-K3}"
@@ -95,7 +96,7 @@ mark_done()     { run mkdir -p "${STATE_DIR}"; run touch "${STATE_DIR}/$1.done";
 
 # Settings a caller may override from the environment for a single run. The
 # profile is sourced, so without this it would silently clobber them.
-readonly OVERRIDABLE=(MAX_RUNNING_REQUESTS MAX_MODEL_LEN LONG_PREFILL_THRESHOLD DP_SIZE)
+readonly OVERRIDABLE=(MAX_RUNNING_REQUESTS MAX_MODEL_LEN LONG_PREFILL_THRESHOLD DP_SIZE MEM_FRACTION_STATIC)
 
 load_profile() {
   local path="${PROFILE_DIR}/${PROFILE}.env"
@@ -135,7 +136,10 @@ raw = subprocess.check_output(
 )
 for scenario in json.loads(raw)["scenarios"]:
     if tuple(scenario["register_ids"]) == wanted:
-        print(scenario["max_concurrency"])
+        # recommended_admission is max(zero-sharing floor, observed peak).
+        # Using the floor alone was the withdrawn B1 advice: 75 as a live
+        # ceiling against a box that had already sustained 427.
+        print(scenario["recommended_admission"])
         break
 else:
     sys.exit(f"capacity model has no scenario for {wanted}")
@@ -170,7 +174,7 @@ stage_preflight() {
     local gpus=0
     command -v rocm-smi >/dev/null \
       || die "rocm-smi not found; this is not an Instinct host"
-    gpus=$(rocm-smi --showid 2>/dev/null | grep -c '^GPU\[' || true)
+    gpus=$(rocm-smi --showid 2>/dev/null | grep -oE '^GPU\[[0-9]+\]' | sort -u | wc -l)
     if (( ${gpus:-0} != REQUIRED_GPUS )); then
       die "found ${gpus:-0} GPUs, this design requires ${REQUIRED_GPUS}.
        1.5 TB of MXFP4 weights do not fit in fewer."
@@ -185,9 +189,16 @@ stage_preflight() {
 
     local disk_gb
     disk_gb=$(df -BG --output=avail "$(dirname "${SCRATCH}")" | tail -1 | tr -dc '0-9')
-    (( ${disk_gb:-0} >= REQUIRED_DISK_GB )) \
-      || die "only ${disk_gb:-0} GB free; the weights alone are ~1.5 TB"
-    ok "${disk_gb} GB free"
+    local weight_marker="${HF_HOME}/.complete-${MODEL_REPO//\//-}"
+    if [[ -f "$weight_marker" ]]; then
+      (( ${disk_gb:-0} >= 50 )) \
+        || die "only ${disk_gb:-0} GB free; traces and snapshots need headroom"
+      ok "${disk_gb} GB free (weights already on disk)"
+    else
+      (( ${disk_gb:-0} >= REQUIRED_DISK_GB )) \
+        || die "only ${disk_gb:-0} GB free; the weights alone are ~1.5 TB"
+      ok "${disk_gb} GB free"
+    fi
   fi
 
   # The capacity model is the source of every admission number below. If its
@@ -282,11 +293,21 @@ snapshot_download('${MODEL_REPO}', max_workers=16, resume_download=True)
 # unknown flag is discovered after the weights load -- several minutes of paid
 # GPU per mistake.
 validate_profile_flags() {
-  local -a required=(tp_size max_model_len max_running_requests max_num_batched_tokens)
+  local -a required=(tp_size context_length max_running_requests chunked_prefill_size enable_metrics)
   (( ENABLE_DP_ATTENTION )) && required+=(enable_dp_attention dp_size)
-  (( ENABLE_PRIORITY_SCHEDULING )) && required+=(enable_priority_scheduling)
+  (( ENABLE_PRIORITY_SCHEDULING )) && required+=(
+    enable_priority_scheduling
+    schedule_policy
+    schedule_low_priority_values_first
+  )
   [[ "${KV_CACHE_DTYPE}" != auto ]] && required+=(kv_cache_dtype)
   (( ENABLE_HIERARCHICAL_CACHE )) && required+=(enable_hierarchical_cache hicache_ratio)
+  [[ "${SGLANG_USE_AITER}" == 1 ]] && required+=(attention_backend)
+  [[ -n "${MEM_FRACTION_STATIC:-}" ]] && required+=(mem_fraction_static)
+  (( ${LANGUAGE_MODEL_ONLY:-0} )) && required+=(language_model_only)
+  [[ -n "${CUDA_GRAPH_MAX_BS_DECODE:-}" ]] && required+=(cuda_graph_max_bs_decode)
+  [[ -n "${MAMBA_SSM_DTYPE:-}" ]] && required+=(mamba_ssm_dtype)
+  (( ${DISABLE_CUDA_GRAPH:-0} )) && required+=(disable_decode_cuda_graph disable_prefill_cuda_graph)
 
   log "validating ${#required[@]} flags against the image's own CLI surface"
 
@@ -349,20 +370,45 @@ build_engine_args() {
     --tp-size "${TP_SIZE}"
     --host "${ENGINE_HOST}"
     --port "${ENGINE_PORT}"
-    --max-model-len "${MAX_MODEL_LEN}"
+    --context-length "${MAX_MODEL_LEN}"
     --max-running-requests "${ceiling}"
-    --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}"
-    --long-prefill-token-threshold "${LONG_PREFILL_THRESHOLD}"
+    --chunked-prefill-size "${MAX_NUM_BATCHED_TOKENS}"
     --reasoning-parser kimi_k3
     --tool-call-parser kimi_k3
+    --enable-metrics
   )
+  if [[ "${SGLANG_USE_AITER}" == 1 ]]; then
+    ENGINE_ARGS+=(--attention-backend aiter)
+  fi
+  if [[ -n "${MEM_FRACTION_STATIC:-}" ]]; then
+    ENGINE_ARGS+=(--mem-fraction-static "${MEM_FRACTION_STATIC}")
+  fi
+  if (( ${LANGUAGE_MODEL_ONLY:-0} )); then
+    ENGINE_ARGS+=(--language-model-only)
+  fi
+  if [[ -n "${CUDA_GRAPH_MAX_BS_DECODE:-}" ]]; then
+    ENGINE_ARGS+=(--cuda-graph-max-bs-decode "${CUDA_GRAPH_MAX_BS_DECODE}")
+  fi
+  if [[ -n "${MAMBA_SSM_DTYPE:-}" ]]; then
+    ENGINE_ARGS+=(--mamba-ssm-dtype "${MAMBA_SSM_DTYPE}")
+  fi
+  if (( ${DISABLE_CUDA_GRAPH:-0} )); then
+    ENGINE_ARGS+=(--disable-decode-cuda-graph --disable-prefill-cuda-graph)
+  fi
   if (( ENABLE_DP_ATTENTION )); then
     ENGINE_ARGS+=(--enable-dp-attention --dp-size "${DP_SIZE}")
   fi
-  # B2. Without this the scheduler is FCFS and every class assignment the
-  # gateway makes is decoration.
+  # B2. Gateway Priority is 0=P0..3=P3 ("lower runs earlier"). This image
+  # defaults to the opposite (higher integer first), so without the low-first
+  # flag P3 distillation would preempt interactive keystrokes.
   if (( ENABLE_PRIORITY_SCHEDULING )); then
-    ENGINE_ARGS+=(--enable-priority-scheduling)
+    ENGINE_ARGS+=(
+      --enable-priority-scheduling
+      --schedule-policy fcfs
+      --schedule-low-priority-values-first
+      --retraction-policy priority
+      --default-priority-value 0
+    )
   fi
   if [[ "${KV_CACHE_DTYPE}" != auto ]]; then
     ENGINE_ARGS+=(--kv-cache-dtype "${KV_CACHE_DTYPE}")
@@ -413,7 +459,7 @@ stage_engine() {
   run docker rm -f "${ENGINE_CONTAINER}" 2>/dev/null || true
 
   run docker run -d --name "${ENGINE_CONTAINER}" \
-    --restart unless-stopped \
+    --restart on-failure:2 \
     --device=/dev/kfd --device=/dev/dri \
     --ipc=host --shm-size 32g --network host \
     --security-opt seccomp=unconfined \
@@ -424,6 +470,8 @@ stage_engine() {
     -e AITER_FLYDSL_FORCE="${AITER_FLYDSL_FORCE}" \
     -e AITER_SITUV2_A8W4="${AITER_SITUV2_A8W4}" \
     -e PYTHONHASHSEED="${PYTHONHASHSEED}" \
+    -e PYTHONUNBUFFERED=1 \
+    -e SGLANG_AITER_HONOR_EXPLICIT_MEM_FRACTION=1 \
     "${ENGINE_IMAGE}" \
     python3 -m sglang.launch_server "${ENGINE_ARGS[@]}"
 
@@ -459,24 +507,51 @@ stage_gateway() {
   # working when it is not.
   local send_priority="${ENABLE_PRIORITY_SCHEDULING:-0}"
 
+  # Prepare package and state ownership for the container launcher.
+  local install_root=/usr/local/lib/k3
+  if (( DRY_RUN )); then
+    printf '  \033[36m+\033[0m install redesign/ -> %s\n' "$install_root"
+  else
+    mkdir -p "${install_root}"
+    rm -rf "${install_root}/redesign"
+    cp -a "${REPO_ROOT}/redesign" "${install_root}/redesign"
+  fi
+  if ! id -u k3 >/dev/null 2>&1; then
+    run useradd --system --home /nonexistent --shell /usr/sbin/nologin k3 || true
+  fi
+  if id -u k3 >/dev/null 2>&1; then
+    run chown -R k3:k3 "${TRACE_DIR}" "${install_root}" 2>/dev/null || true
+  else
+    warn "k3 user missing; verify the container UID and state-directory permissions"
+  fi
+
   local unit=/etc/systemd/system/k3-gateway.service
   local rendered
   rendered=$(cat <<UNIT
 [Unit]
 Description=Kimi-K3 tenancy and backpressure gateway
-After=docker.service
+After=docker.service k3.service
 Requires=docker.service
+Wants=k3.service
 
 [Service]
 Type=simple
-WorkingDirectory=${REPO_ROOT}
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=${install_root}
 Environment=K3_ENGINE_URL=http://${ENGINE_HOST}:${ENGINE_PORT}
 Environment=K3_MAX_MODEL_LEN=${MAX_MODEL_LEN}
 Environment=K3_ADMISSION_CEILING=${ceiling}
 Environment=K3_SEND_PRIORITY=${send_priority}
 Environment=K3_TRACE_PATH=${TRACE_DIR}/requests.jsonl
-ExecStart=/usr/bin/python3 -m redesign.gateway.server --port ${GATEWAY_PORT}
+Environment=K3_OFFBOX_URL=${K3_OFFBOX_URL:-}
+Environment=K3_OFFBOX_API_KEY=${K3_OFFBOX_API_KEY:-}
+Environment=K3_OFFBOX_MODEL=${K3_OFFBOX_MODEL:-offbox}
+Environment=K3_BATCH_CUSTOMERS=${K3_BATCH_CUSTOMERS:-}
+EnvironmentFile=-${SCRATCH}/deploy/offbox.env
+ExecStartPre=-/usr/bin/docker rm -f k3-gateway
+ExecStart=${install_root}/redesign/deploy/containers/run.sh k3-gateway \
+  python3 -m redesign.gateway.server --port ${GATEWAY_PORT}
+ExecStop=/usr/bin/docker stop -t 10 k3-gateway
 Restart=always
 RestartSec=2
 
@@ -499,44 +574,103 @@ UNIT
 }
 
 # ---------------------------------------------------------------------------
+# ops -- first-boot checks, distill lane, SLO scrape, trace analysis
+# ---------------------------------------------------------------------------
+
+stage_ops() {
+  info "ops"
+  local unit_dir="${SCRIPT_DIR}/systemd"
+
+  run mkdir -p "${STATE_DIR}/alerts" "${STATE_DIR}/gate" "${STATE_DIR}/traffic" \
+    "${SCRATCH}/distill" "${SCRATCH}/deploy"
+  if [[ ! -f "${SCRATCH}/deploy/offbox.env" ]]; then
+    if (( DRY_RUN )); then
+      printf '  \033[36m+\033[0m write %s\n' "${SCRATCH}/deploy/offbox.env"
+    else
+      cat > "${SCRATCH}/deploy/offbox.env" <<'ENV'
+# Optional D1/E1. Drop a real URL here and restart k3-gateway.
+# K3_OFFBOX_URL=
+# K3_OFFBOX_API_KEY=
+# K3_OFFBOX_MODEL=offbox
+ENV
+      chmod 600 "${SCRATCH}/deploy/offbox.env"
+    fi
+  fi
+
+  run chmod +x "${SCRIPT_DIR}/first-boot.sh" \
+    "${SCRIPT_DIR}/containers/run.sh" \
+    "${SCRIPT_DIR}/containers/traffic.sh" \
+    "${SCRIPT_DIR}/litellm/start.sh"
+  if (( DRY_RUN )); then
+    printf '  \033[36m+\033[0m docker build k3-python:24.04\n'
+  else
+    docker build -t k3-python:24.04 \
+      -f "${SCRIPT_DIR}/containers/Dockerfile.python" \
+      "${SCRIPT_DIR}/containers"
+  fi
+  if id -u k3 >/dev/null 2>&1; then
+    run chown -R k3:k3 "${STATE_DIR}" "${SCRATCH}/distill" "${SCRATCH}/traces" 2>/dev/null || true
+  fi
+
+  local unit
+  for unit in k3-first-boot.service k3-distill.service k3-alerts.service \
+              k3-traffic.service k3-traffic.timer k3-litellm-db.service \
+              k3-litellm-redis.service k3-litellm.service; do
+    if (( DRY_RUN )); then
+      printf '  \033[36m+\033[0m install %s\n' "/etc/systemd/system/${unit}"
+    else
+      cp "${unit_dir}/${unit}" "/etc/systemd/system/${unit}"
+    fi
+  done
+
+  run systemctl daemon-reload
+  run systemctl enable --now k3-alerts.service
+  run systemctl enable --now k3-traffic.timer
+  run systemctl enable k3-first-boot.service
+  run systemctl enable k3-distill.service
+  if (( DRY_RUN )); then
+    printf '  \033[36m+\033[0m wipe %s (no Authorization swap)\n' /scratch/deploy/litellm-nginx-auth.conf
+  else
+    printf '%s\n' '# SYSTEM-DESIGN §4: do not set Authorization. LiteLLM owns the key.' \
+      > /scratch/deploy/litellm-nginx-auth.conf
+    chmod 644 /scratch/deploy/litellm-nginx-auth.conf
+  fi
+  if [[ -x /usr/local/lib/k3/venv/bin/litellm ]]; then
+    run chmod +x "${SCRIPT_DIR}/litellm/start.sh"
+    if [[ -f /scratch/deploy/litellm.env ]]; then
+      run systemctl enable --now k3-litellm-db.service
+      run systemctl enable --now k3-litellm-redis.service
+    fi
+    run systemctl enable --now k3-litellm.service
+  else
+    warn "litellm venv missing; the public API requires LiteLLM"
+  fi
+  # Start first-boot only if the engine is already answering; otherwise the
+  # unit waits on k3.service after the next boot / engine start.
+  if curl -fsS "http://${ENGINE_HOST}:${ENGINE_PORT}/health" >/dev/null 2>&1; then
+    run systemctl start k3-first-boot.service
+  else
+    warn "engine not healthy yet; k3-first-boot will run after k3.service"
+  fi
+  ok "ops: alerts scrape, traffic timer, first-boot B0/Z5, distill enabled"
+  mark_done ops
+}
+
+# ---------------------------------------------------------------------------
 # edge
 # ---------------------------------------------------------------------------
 
-# Customer keys live in a tab-separated file outside the repo. Format:
-#   <name>\t<key>
-# gitignored; generated by `./deploy.sh keys`.
-readonly CUSTOMERS_FILE="${CUSTOMERS_FILE:-${SCRATCH}/customers.tsv}"
+# LiteLLM virtual keys are tenancy. nginx only default-denies missing Bearer.
 readonly NGINX_CONF_DIR="${NGINX_CONF_DIR:-/etc/nginx/conf.d}"
 
-# Rebuilds the auth and limit layer from the customer table. Idempotent, and
-# safe to run while serving -- nginx reloads rather than restarts.
 render_key_map() {
   local keys_conf="${NGINX_CONF_DIR}/00-k3-keys.conf"
-
-  if [[ ! -f "${CUSTOMERS_FILE}" ]]; then
-    warn "no customer table at ${CUSTOMERS_FILE}; every /v1 request will 401"
-    log  "create one with:  printf 'acme\\t%s\\n' \"\$(openssl rand -hex 32)\" >> ${CUSTOMERS_FILE}"
-  fi
-
-  local body=""
-  body+=$'# Generated by deploy.sh. Do not edit; edit the customer table.\n'
-  body+=$'map $http_authorization $k3_customer {\n    default "";\n'
-  if [[ -f "${CUSTOMERS_FILE}" ]]; then
-    local name key
-    while IFS=$'\t' read -r name key; do
-      [[ -z "${name}" || "${name}" == \#* || -z "${key}" ]] && continue
-      body+="    \"Bearer ${key}\" \"${name}\";"$'\n'
-    done < "${CUSTOMERS_FILE}"
-  fi
-  body+=$'}\n'
-
   if (( DRY_RUN )); then
-    printf '  \033[36m+\033[0m write %s (%s customers)\n' "$keys_conf" \
-      "$(grep -cve '^#' -e '^$' "${CUSTOMERS_FILE}" 2>/dev/null || echo 0)"
-  else
-    install -m 0640 /dev/null "$keys_conf"
-    printf '%s' "$body" > "$keys_conf"
+    printf '  \033[36m+\033[0m python3 -m redesign.edge.keys --output %s\n' "$keys_conf"
+    return 0
   fi
+  ( cd "${REPO_ROOT}" && python3 -m redesign.edge.keys --output "$keys_conf" ) \
+    || die "failed to write the pass-through Bearer map"
 }
 
 render_bootstrap_block() {
@@ -564,19 +698,19 @@ render_server_block() {
 # Generated by deploy.sh. Implements docs/SYSTEM-DESIGN.md 4 (edge).
 #
 # The engine's own API key leaves unauthenticated routes open and provides no
-# per-customer attribution, so this layer is not optional. It terminates TLS,
-# authenticates per customer, applies per-key limits, and proxies ONLY to the
-# gateway -- never to the engine, which would bypass the clamp and the
-# backpressure circuit.
+# attribution, so this layer is not optional. It terminates TLS, default-denies
+# a missing Bearer, applies per-key conn/req caps, and proxies ONLY to LiteLLM
+# -- never to the engine, which would bypass tenancy, the clamp, and
+# backpressure.
 
 log_format k3usage '$remote_addr $k3_customer [$time_local] "$request" '
                    '$status $body_bytes_sent rt=$request_time '
                    'ttfb=$upstream_header_time cls=$upstream_http_x_k3_class';
 
-# Per-customer limits. NOTE: nginx does not account requests whose key
-# evaluates to the empty string, so these apply to AUTHENTICATED traffic only.
-limit_req_zone  $k3_customer zone=k3_req:16m rate=100r/s;
-limit_conn_zone $k3_customer zone=k3_conn:16m;
+# Per-key limits. Identity is the Bearer token; LiteLLM decides if it is valid.
+# Empty Authorization is 401'd before these zones apply.
+limit_req_zone  $http_authorization zone=k3_req:16m rate=100r/s;
+limit_conn_zone $http_authorization zone=k3_conn:16m;
 
 # Per-IP limits. Without these, anyone without a valid key is unthrottled:
 # credential stuffing against the key map and connection floods are free, and
@@ -584,6 +718,12 @@ limit_conn_zone $k3_customer zone=k3_conn:16m;
 limit_req_zone  $binary_remote_addr zone=k3_ip_req:16m rate=20r/s;
 limit_conn_zone $binary_remote_addr zone=k3_ip_conn:16m;
 
+# Every public request must pass LiteLLM authentication and cache policy.
+# The unauthenticated gateway cannot serve as a tenancy failover.
+upstream k3_tenancy {
+    server 127.0.0.1:4000 max_fails=2 fail_timeout=5s;
+    keepalive 32;
+}
 upstream k3_gateway { server 127.0.0.1:__GATEWAY_PORT__; keepalive 32; }
 
 # Anything that matches no server_name is dropped without a response. Default
@@ -603,8 +743,7 @@ server {
 }
 
 server {
-    listen 443 ssl;
-    http2 on;
+    listen 443 ssl http2;
     server_name __DOMAIN__;
 
     ssl_certificate     /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
@@ -621,22 +760,25 @@ server {
     client_max_body_size 64m;
 
     location /v1/ {
-        # Applied before the auth check, so unauthenticated floods are bounded.
+        # Per-IP limits for requests that reach nginx's preaccess phase.
         limit_req  zone=k3_ip_req burst=40 nodelay;
-        limit_conn k3_ip_conn 64;
+        limit_conn k3_ip_conn 96;
 
-        if ($k3_customer = "") { return 401; }
+        if ($http_authorization = "") { return 401; }
 
         limit_req  zone=k3_req burst=200 nodelay;
-        # S-2: one customer must not be able to occupy every engine slot. Kept
-        # below the derived admission ceiling rather than above it.
-        limit_conn k3_conn 32;
+        # Portal-sized: one YYDS/shared key is a pool, not a developer.
+        # 96 of admission 427 ≈ 22%. Was 32; that clipped the pool before TPM.
+        limit_conn k3_conn 96;
 
         proxy_set_header X-K3-Customer $k3_customer;
-        proxy_set_header X-K3-Batch $http_x_k3_batch;
+        # S-3: do not forward a client-supplied batch header. Distillation
+        # hits the engine on loopback; a public client must not self-declare P3.
+        proxy_set_header X-K3-Batch "";
         proxy_set_header Host $host;
         proxy_http_version 1.1;
-        proxy_pass http://k3_gateway;
+        proxy_pass http://k3_tenancy;
+        proxy_next_upstream error timeout http_502 http_503;
     }
 
     # Scrape surfaces stay on loopback. The gateway has no auth of its own;
@@ -646,7 +788,14 @@ server {
 
     location /.well-known/acme-challenge/ { root /var/www/certbot; }
 
-    location / { return 403; }
+    location / {
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_http_version 1.1;
+        proxy_pass http://k3_tenancy;
+        proxy_next_upstream error timeout http_502 http_503;
+    }
 }
 NGINX
 )
@@ -669,7 +818,8 @@ stage_keys() {
   else
     nginx -t && systemctl reload nginx
   fi
-  ok "auth layer rebuilt from ${CUSTOMERS_FILE}"
+  ok "auth layer is pass-through Bearer; LiteLLM owns tenancy"
+  mark_done keys
 }
 
 require_nginx() {
@@ -686,7 +836,7 @@ stage_edge() {
 
   [[ -n "${DOMAIN:-}" ]] || die \
     "DOMAIN is unset. The edge needs a hostname for TLS and for the
-       default-deny block:  DOMAIN=cflox.store ./deploy.sh edge"
+       default-deny block:  DOMAIN=api.cflowx.in ./deploy.sh edge"
 
 
   run mkdir -p /var/log/k3
@@ -710,7 +860,7 @@ stage_edge() {
     nginx -t || die "bootstrap nginx config is invalid"
     systemctl reload nginx
     local resolved public
-    resolved=$(getent hosts "${DOMAIN}" | awk '{print $1; exit}')
+    resolved=$(getent ahostsv4 "${DOMAIN}" | awk '{print $1; exit}')
     public=$(curl -fsS --max-time 10 https://api.ipify.org || echo "")
     if [[ -z "$resolved" || "$resolved" != "$public" ]]; then
       die "${DOMAIN} resolves to '${resolved:-nothing}' but this host is '${public}'.
@@ -753,27 +903,51 @@ stage_verify() {
     local waited=0
     until curl -fsS "$health" >/dev/null 2>&1; do
       (( waited += 10 ))
-      (( waited > 900 )) && die "engine did not become ready within 15 minutes"
+      (( waited > 2400 )) && die "engine did not become ready within 40 minutes"
       sleep 10
     done
     ok "engine healthy after ${waited}s"
   fi
 
-  # The reported pool is what every admission number is derived from. If it does
-  # not match the profile's prediction, the profile did not do what it claims --
-  # most importantly, A1 may have been silently ignored.
   if (( DRY_RUN )); then
-    printf '  \033[36m+\033[0m compare reported KV pool against the capacity model\n'
+    printf '  \033[36m+\033[0m python3 -m redesign.probe.cache_salt --url http://%s:%s\n' \
+      "${ENGINE_HOST}" "${ENGINE_PORT}"
+  elif ( cd "${REPO_ROOT}" && python3 -m redesign.probe.cache_salt \
+           --url "http://${ENGINE_HOST}:${ENGINE_PORT}" \
+           --model "${K3_GATE_MODEL:-default}" \
+           --json > "${STATE_DIR}/cache-salt.json" ); then
+    ok "B0 cache_salt sharing confirmed"
   else
-    local pool
-    pool=$(docker logs "${ENGINE_CONTAINER}" 2>&1 \
-      | grep -oE 'KV cache size:? *[0-9]+' | tail -1 | grep -oE '[0-9]+' || echo "")
-    if [[ -n "$pool" ]]; then
-      log "engine reports a KV pool of ${pool} tokens"
-      ( cd "${REPO_ROOT}" && python3 -m redesign.capacity ) | grep -A3 'HYPOTHESIS TEST' || true
-      if (( ENABLE_DP_ATTENTION )) && (( pool < 10000000 )); then
-        warn "A1 is enabled but the pool is under 10M tokens.
-       De-duplication may not have taken effect -- this is G2's pass/fail."
+    warn "B0 cache_salt did not see a hit; clients may be salting or the cache is empty"
+  fi
+
+  # G2 pass/fail is the AGGREGATE across ranks, never one worker's log line.
+  # Under DP attention each rank still reports ~2.3M (AUDIT 1.4).
+  if (( DRY_RUN )); then
+    printf '  \033[36m+\033[0m compare AGGREGATE KV pool against the capacity model\n'
+  else
+    local pools
+    pools=$(docker logs "${ENGINE_CONTAINER}" 2>&1 \
+      | grep -oE 'KV cache size:? *[0-9]+' | grep -oE '[0-9]+' || echo "")
+    if [[ -n "$pools" ]]; then
+      log "per-rank pool lines: ${pools}"
+      if (( ENABLE_DP_ATTENTION )); then
+        ( cd "${REPO_ROOT}" && python3 - "$pools" <<'PY'
+import sys
+from redesign.capacity import deployment, g2
+pools = [int(x) for x in sys.argv[1].split() if x.isdigit()]
+base = deployment.production_model()
+verdict = g2.interpret_g2_pools(
+    pools,
+    base.per_rank_resident_tokens(),
+    base.with_variant(deduplicated=True).aggregate_unique_tokens(),
+)
+print(f"  aggregate {verdict.aggregate:,}  expected {verdict.expected_aggregate:,}"
+      f"  spread {verdict.occupancy_spread:.0%}  pass={verdict.passed}")
+if not verdict.passed:
+    sys.exit(1)
+PY
+        ) || warn "aggregate pool does not match the A1 prediction; see G2 pass/fail"
       fi
     else
       warn "could not read the KV pool from engine logs"

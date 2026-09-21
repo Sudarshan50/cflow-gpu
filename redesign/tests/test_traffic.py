@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,7 +15,7 @@ from redesign.traffic.records import (
     PathStats,
     TrafficWindow,
 )
-from redesign.traffic.sources import ProdStatsSource
+from redesign.traffic.sources import GatewayTraceSource, ProdStatsSource, parse_duration
 
 BASELINE = Path("eval/runs/20260919T145955Z-baseline/prod_stats.json")
 
@@ -140,6 +142,31 @@ class BaselineWindowTest(unittest.TestCase):
         severities = [f.severity for f in analysis.analyse(self.window)]
         ranks = [analysis.SEVERITY_ORDER[s] for s in severities]
         self.assertEqual(ranks, sorted(ranks))
+
+
+class GatewayTraceSourceTest(unittest.TestCase):
+    def test_window_units(self):
+        self.assertEqual(parse_duration("24h"), 86400.0)
+        self.assertEqual(parse_duration("15m"), 900.0)
+
+    def test_admit_and_shed_are_counted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "requests.jsonl"
+            now = 1_000_000.0
+            rows = [
+                {"timestamp": now - 10, "customer": "acme", "path": "/v1/chat/completions",
+                 "outcome": "admit"},
+                {"timestamp": now - 5, "customer": "acme", "path": "/v1/chat/completions",
+                 "outcome": "reject_shed"},
+                {"timestamp": now - 90_000, "customer": "old", "path": "/v1/chat/completions",
+                 "outcome": "admit"},
+            ]
+            path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+            window = GatewayTraceSource(path, "1h", now=now).load()
+        self.assertEqual(window.requests, 2)
+        self.assertEqual(window.successful, 1)
+        self.assertEqual(window.failures, 1)
+        self.assertEqual(window.customers[0].customer, "acme")
 
 
 if __name__ == "__main__":

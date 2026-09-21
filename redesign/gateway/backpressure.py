@@ -1,10 +1,5 @@
 """Refuses work when the engine says it is in trouble.
 
-The gateway does not model KV. It reads what the engine publishes and decides
-which classes to stop admitting. Ownership is set out in
-docs/SYSTEM-DESIGN.md 4: the engine owns scheduling, the gateway owns tenancy,
-and this module is the seam.
-
 Fails open. A broken breaker must degrade admission, never deny service.
 """
 
@@ -17,8 +12,18 @@ from dataclasses import dataclass, field
 from .classification import TrafficClass
 from .models import EngineSnapshot, Priority
 
-KV_DISTRESS_THRESHOLD = 0.95
-PREEMPTION_DISTRESS_THRESHOLD = 0.0
+# KV alone this high means the pool is gone whatever the queue looks like.
+KV_DISTRESS_THRESHOLD = 0.97
+
+# Earlier, and more precise: a full-ish pool *plus* a queue is the live
+# signature of over-admission (KV 96%, 21 waiting, queue p90 114 s on
+# opt-2026-09-20/baseline.json). Either symptom alone is survivable.
+KV_PRESSURE_THRESHOLD = 0.90
+QUEUE_DISTRESS_DEPTH = 8
+
+# One preemption in a long window is not distress; a sustained rate is.
+# A zero threshold sheds on the first counter tick.
+PREEMPTION_DISTRESS_THRESHOLD = 1.0
 
 # Classes shed first when the engine is distressed. P0 is never shed; if it
 # cannot be served the box is down, which is an availability problem.
@@ -26,8 +31,7 @@ SHEDDABLE_PRIORITIES = (Priority.BATCH, Priority.LONG_CONTEXT)
 
 DEFAULT_RETRY_AFTER_SECONDS = 30
 
-# Budget share given to an off-box class that has nowhere to go yet, so it is
-# bounded rather than unlimited until D1 is configured.
+# Share for an off-box class with no target yet, so it is bounded not unlimited.
 LOCAL_FALLBACK_SHARE = 0.25
 
 
@@ -58,10 +62,14 @@ class CircuitBreaker:
         source: EngineHealthSource,
         kv_threshold: float = KV_DISTRESS_THRESHOLD,
         preemption_threshold: float = PREEMPTION_DISTRESS_THRESHOLD,
+        kv_pressure_threshold: float = KV_PRESSURE_THRESHOLD,
+        queue_depth: int = QUEUE_DISTRESS_DEPTH,
     ) -> None:
         self._source = source
         self._kv_threshold = kv_threshold
         self._preemption_threshold = preemption_threshold
+        self._kv_pressure_threshold = kv_pressure_threshold
+        self._queue_depth = queue_depth
 
     def evaluate(self) -> DistressVerdict:
         try:
@@ -72,6 +80,13 @@ class CircuitBreaker:
         reasons = []
         if snapshot.kv_usage > self._kv_threshold:
             reasons.append(f"kv_usage {snapshot.kv_usage:.0%}")
+        elif (
+            snapshot.kv_usage > self._kv_pressure_threshold
+            and snapshot.waiting > self._queue_depth
+        ):
+            reasons.append(
+                f"kv_usage {snapshot.kv_usage:.0%} with {snapshot.waiting} queued"
+            )
         if snapshot.preemptions_per_minute > self._preemption_threshold:
             reasons.append(f"preemptions {snapshot.preemptions_per_minute:.1f}/min")
 
@@ -88,7 +103,7 @@ class CircuitBreaker:
 
 @dataclass
 class ClassBudget:
-    """Concurrency slots per class, as a share of a server-wide ceiling.
+    """Concurrency slots bounded by both class shares and a server-wide ceiling.
 
     Thread-safe. The server runs a thread per request, so an unguarded
     read-modify-write here loses updates: a lost decrement is never recovered
@@ -104,7 +119,8 @@ class ClassBudget:
         return int(self.ceiling * self.shares.get(traffic_class.name, 0.0))
 
     def in_flight(self, traffic_class: TrafficClass) -> int:
-        return self._in_flight.get(traffic_class.name, 0)
+        with self._lock:
+            return self._in_flight.get(traffic_class.name, 0)
 
     def try_acquire(self, traffic_class: TrafficClass) -> bool:
         limit = self.limit_for(traffic_class)
@@ -112,7 +128,7 @@ class ClassBudget:
             return False
         with self._lock:
             current = self._in_flight.get(traffic_class.name, 0)
-            if current >= limit:
+            if current >= limit or sum(self._in_flight.values()) >= self.ceiling:
                 return False
             self._in_flight[traffic_class.name] = current + 1
             return True

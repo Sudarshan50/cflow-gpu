@@ -1,0 +1,25 @@
+[Unit]
+Description=Kimi-K3 P3 distillation lane (D3)
+After=docker.service k3.service k3-first-boot.service
+Wants=k3.service
+
+[Service]
+Type=oneshot
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/usr/local/lib/k3
+Environment=K3_ENGINE_URL=http://127.0.0.1:8001
+Environment=K3_GATE_MODEL=FW-Kimi-K3
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+ExecStartPre=-/usr/bin/docker rm -f k3-distill
+ExecStart=/usr/local/lib/k3/redesign/deploy/containers/run.sh k3-distill \
+  python3 -m redesign.distill \
+  --engine-url http://127.0.0.1:8001 \
+  --prompts /usr/local/lib/k3/redesign/deploy/distill/prompts.jsonl \
+  --output /scratch/distill/teacher.jsonl \
+  --checkpoint /scratch/distill/teacher.ckpt \
+  --poll-seconds 5
+
+[Install]
+WantedBy=multi-user.target

@@ -157,11 +157,10 @@ restore)
   log "restored ${#FILES[@]} files, $n customer key(s)"
   cat <<'EOF'
 
-  Next, rebuild the nginx auth layer from the restored table and restart the
-  engine so it picks up the restored upstream key:
-      ./gen-keys.sh                 # regenerates 00-k3-keys.conf + k3-limits.inc
+  customers.tsv is not tenancy. LiteLLM virtual keys live in Postgres.
+  If api-key.txt changed, restart the engine so it picks up the upstream key:
       systemctl restart k3.service  # only if api-key.txt changed (~6 min)
-      ./verify-auth.sh
+      EDGE_KEY_FILE=/scratch/deploy/edge.key ./verify-auth.sh
 EOF
   ;;
 

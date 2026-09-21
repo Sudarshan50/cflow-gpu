@@ -1,0 +1,19 @@
+[Unit]
+Description=LiteLLM Redis (shared limits / spend / router state)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=-/scratch/deploy/litellm.env
+ExecStartPre=-/usr/bin/docker rm -f k3-litellm-redis
+ExecStart=/usr/bin/docker run -d --name k3-litellm-redis --restart unless-stopped \
+  -p 127.0.0.1:6379:6379 \
+  -v /scratch/litellm-redis:/data \
+  redis:7-alpine \
+  redis-server --appendonly yes --bind 0.0.0.0 --requirepass ${REDIS_PASSWORD}
+ExecStop=/usr/bin/docker stop -t 10 k3-litellm-redis
+
+[Install]
+WantedBy=multi-user.target

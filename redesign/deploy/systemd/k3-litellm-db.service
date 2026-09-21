@@ -1,0 +1,20 @@
+[Unit]
+Description=LiteLLM PostgreSQL (admin UI / virtual keys)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=-/scratch/deploy/litellm.env
+ExecStartPre=-/usr/bin/docker rm -f k3-litellm-db
+ExecStart=/usr/bin/docker run -d --name k3-litellm-db --restart unless-stopped \
+  --env-file /scratch/deploy/litellm.env \
+  -p 127.0.0.1:5432:5432 \
+  -v /scratch/litellm-db:/var/lib/postgresql/data \
+  postgres:16-alpine \
+  postgres -c max_connections=400 -c shared_buffers=256MB
+ExecStop=/usr/bin/docker stop -t 20 k3-litellm-db
+
+[Install]
+WantedBy=multi-user.target

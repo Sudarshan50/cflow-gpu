@@ -30,6 +30,7 @@ class RequestEnvelope:
     requested_max_tokens: int | None = None
     streaming: bool = False
     has_tools: bool = False
+    has_images: bool = False
     batch_hint: bool = False
     path: str = "/v1/chat/completions"
 

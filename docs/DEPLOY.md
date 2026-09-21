@@ -1,6 +1,9 @@
 # Deployment guide
 
-Rebuilding `https://cflox.store/v1` — Kimi-K3 on 8× MI355X — from nothing.
+**Live path is `https://api.cflowx.in/v1` via `redesign/deploy/deploy.sh`.**
+The repo-root `deploy.sh` is retired and will refuse to run. Tenancy is
+LiteLLM. Do not restore the nginx `customers.tsv` allowlist or Authorization
+swap described in older sections of this file.
 
 This document is the **from-nothing** path: it assumes you have lost the box and
 everything on it, including the 1.5 TB of weights, and have no usable snapshot.

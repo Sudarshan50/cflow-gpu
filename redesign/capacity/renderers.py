@@ -1,4 +1,4 @@
-"""Renderers for a CapacityReport. Add a format by implementing Renderer."""
+"""I/O-free formatters for a CapacityReport."""
 
 from __future__ import annotations
 
@@ -60,10 +60,15 @@ class TextRenderer:
             f"  layers                    {arch.total_layers}"
             f"  ({arch.kda_layers} KDA + {arch.mla_layers} MLA)",
             f"  KDA state per sequence    {arch.kda_state_bytes / MiB:,.0f} MiB (fixed)",
-            f"  MLA KV per token, /rank   {arch.mla_bytes_per_token_per_rank / KiB:,.0f} KiB",
+            f"  MLA KV documented /rank   {arch.mla_bytes_per_token_per_rank / KiB:,.0f} KiB",
             f"  TP size / MLA kv heads    {par.tp_size} / {par.mla_kv_heads}",
             f"  replication factor        {par.replication_factor}x",
-            f"  MLA KV per token, cluster {report.model.bytes_per_token / KiB:,.0f} KiB",
+            f"  MLA KV per token, /rank   {report.model.bytes_per_token_per_rank / KiB:,.0f} KiB"
+            f"  (cluster view {report.model.bytes_per_token / KiB:,.0f} KiB)",
+            f"  per-rank resident pool    {_tokens(report.model.per_rank_resident_tokens())}"
+            f"  (what one worker logs)",
+            f"  aggregate unique tokens   {_tokens(report.model.aggregate_unique_tokens())}"
+            f"  (replicated: same as per-rank)",
         ])
 
     def _derived(self, report: CapacityReport) -> str:
@@ -79,17 +84,28 @@ class TextRenderer:
 
     def _hypothesis(self, report: CapacityReport) -> str:
         h = report.hypothesis
-        return "\n".join([
-            "\nHYPOTHESIS TEST",
-            f"  measured pool             {h.measured_tokens:,} tokens",
+        lines = [
+            "\nHYPOTHESIS TEST  (per-rank -- G0 reinstated)",
+            f"  measured pool             {h.measured_tokens:,} tokens  [{h.scope}]",
+            f"  implied KiB/token         {h.implied_kib_per_token:.1f} KiB"
+            f"  (documented 27 KiB)",
             f"  predicted if REPLICATED   {h.predicted_replicated:,}"
             f"  (error {100 * h.error_replicated:.1f}%)",
             f"  predicted if DE-DUPED     {h.predicted_deduplicated:,}"
-            f"  (error {100 * h.error_deduplicated:.1f}%)",
+            f"  aggregate unique (error {100 * h.error_deduplicated:.1f}%)",
             f"  unexplained residual      {h.residual_bytes / GiB:,.1f} GiB"
             f"  = {h.residual_as_kda_sequences:,.0f} sequences of KDA state",
             f"  VERDICT                   {h.verdict}",
-        ])
+        ]
+        if report.observation_fits:
+            lines.append("  other (available KV, pool) pairs in this repo:")
+            for fit in report.observation_fits:
+                lines.append(
+                    f"    {fit.available_gib:5.2f} GiB / {fit.pool_tokens:>9,} tok"
+                    f"  -> {fit.implied_kib_per_token:.1f} KiB/tok"
+                    f"  (error {100 * fit.error:.0f}%)  {fit.source}"
+                )
+        return "\n".join(lines)
 
     def _scenarios(self, report: CapacityReport) -> str:
         lines = [
@@ -110,21 +126,35 @@ class TextRenderer:
     def _cross_check(self, report: CapacityReport) -> str:
         run_lo, run_hi = report.observed_running
         q_lo, q_hi = report.observed_queued
+        sharing = "modelled" if report.prefix_sharing_modelled else "UNKNOWN -- floor only"
         return "\n".join([
             "\nCROSS-CHECK AGAINST PRODUCTION",
-            f"  model says sustainable    {report.modelled_concurrency} sequences"
+            f"  zero-sharing FLOOR        {report.modelled_concurrency} sequences"
             f" @ {report.mean_prompt_tokens:,.0f} tok",
-            f"  observed running          {run_lo}-{run_hi}",
-            f"  observed queued           {q_lo}-{q_hi}"
-            f"  (total in system {run_lo + q_lo}-{run_hi + q_hi})",
+            f"  prefix sharing            {sharing}",
+            f"  observed running          {run_lo}-{run_hi}  (queued {q_lo}-{q_hi} hold no KV)",
+            f"  observed peak sustained   {report.observed_peak_concurrency}"
+            f"  (K3-DEPLOYMENT.md:39)",
+            f"  recommended admission     {report.recommended_admission}"
+            f"  (max of floor and observed peak)",
             f"  configured max-num-seqs   {report.configured_max_num_seqs}"
-            f"  ({report.overcommit_factor:.1f}x sustainable)",
+            f"  ({report.overcommit_factor:.1f}x the floor; not an admission target)",
         ])
 
     def _admission(self, report: CapacityReport) -> str:
-        lines = ["\nADMISSION CEILING BY SCENARIO"]
+        lines = [
+            "\nADMISSION CEILING BY SCENARIO",
+            f"  {'':44s} {'floor':>6s} {'admit':>6s}",
+        ]
         for result in report.scenarios:
-            lines.append(f"  {_scenario_label(result):44s} {result.max_concurrency:>6d}")
+            lines.append(
+                f"  {_scenario_label(result):44s} "
+                f"{result.max_concurrency:>6d} "
+                f"{result.recommended_admission:>6d}"
+            )
+        lines.append(
+            "  floor = zero-sharing. admit = what deploy.sh feeds the engine."
+        )
         return "\n".join(lines)
 
     def _sweep(self, report: CapacityReport) -> str:
@@ -147,9 +177,15 @@ class JsonRenderer:
                 "replication_factor": model.parallelism.replication_factor,
             },
             "bytes_per_token": model.bytes_per_token,
+            "bytes_per_token_per_rank": model.bytes_per_token_per_rank,
+            "per_rank_resident_tokens": model.per_rank_resident_tokens(),
+            "aggregate_unique_tokens": model.aggregate_unique_tokens(),
             "breakeven_tokens": model.breakeven_tokens,
             "mean_prompt_tokens": report.mean_prompt_tokens,
             "modelled_concurrency": report.modelled_concurrency,
+            "recommended_admission": report.recommended_admission,
+            "observed_peak_concurrency": report.observed_peak_concurrency,
+            "prefix_sharing_modelled": report.prefix_sharing_modelled,
             "configured_max_num_seqs": report.configured_max_num_seqs,
             "overcommit_factor": report.overcommit_factor,
             "hypothesis": dataclasses.asdict(report.hypothesis),
@@ -162,7 +198,10 @@ class JsonRenderer:
                     "addressable_tokens": r.addressable_tokens,
                     "multiplier": r.multiplier,
                     "max_concurrency": r.max_concurrency,
+                    "recommended_admission": r.recommended_admission,
                     "bytes_per_token": r.bytes_per_token,
+                    "per_rank_resident_tokens": r.per_rank_resident_tokens,
+                    "aggregate_unique_tokens": r.aggregate_unique_tokens,
                 }
                 for r in report.scenarios
             ],

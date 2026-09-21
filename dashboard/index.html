@@ -226,6 +226,9 @@
 
 <script>
 const DASH = '\u2014';
+const esc = s => String(s ?? '').replace(/[&<>"'`]/g, c => ({
+  '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','`':'&#96;'
+}[c]));
 const fmt = (v, d = 0) =>
   (v === null || v === undefined || Number.isNaN(v))
     ? DASH
@@ -290,7 +293,7 @@ function renderAlerts(d) {
   if (!a.length) { panel.style.display = 'none'; return; }
   panel.style.display = '';
   document.getElementById('alerts').innerHTML =
-    a.map(x => `<div class="alert ${x.level}">${x.text}</div>`).join('');
+    a.map(x => `<div class="alert ${esc(x.level)}">${esc(x.text)}</div>`).join('');
 }
 
 function peakTpm(d) {
@@ -352,7 +355,7 @@ function renderCustomers(d) {
         const unauth = c.customer === '(unauthenticated)';
         const name = unauth
           ? `<span class="tag">unauthenticated</span>`
-          : `<code>${c.customer}</code>`;
+          : `<code>${esc(c.customer)}</code>`;
         return `<tr>
           <td>${name}</td>
           <td>${fmt(c.requests)}</td>
@@ -370,8 +373,10 @@ function renderCustomers(d) {
     : `<tr><td colspan="11" class="nodata">no requests in the last 15 minutes</td></tr>`;
 
   document.getElementById('custNote').textContent = ac.available
-    ? `p50/p95 are edge round-trip times for successful calls, so they include `
-      + `the full streaming response, not just first token. Source: ${ac.path}`
+    ? `Grouped by client IP (nginx no longer names keys). `
+      + `p50/p95 are edge round-trip times for successful /v1/ calls, including `
+      + `the full stream. Source: ${ac.path}`
+      + (ac.dropped_ui ? ` · ${ac.dropped_ui} portal/UI hits omitted` : '')
     : `usage log unavailable: ${ac.error || 'unknown error'}`;
 }
 
@@ -390,10 +395,10 @@ function renderStatus(d) {
   document.getElementById('errBody').innerHTML = errs.length
     ? errs.map(e => `<tr>
         <td>${new Date(e.ts * 1000).toLocaleTimeString()}</td>
-        <td>${e.cust === '(none)' ? '<span class="tag">none</span>' : '<code>' + e.cust + '</code>'}</td>
+        <td>${e.cust === '(none)' ? '<span class="tag">none</span>' : '<code>' + esc(e.cust) + '</code>'}</td>
         <td style="color:${e.status >= 500 ? 'var(--bad)' : 'var(--warn)'}">${e.status}</td>
-        <td>${e.path}</td>
-        <td class="muted opt">${e.ip}</td>
+        <td>${esc(e.path)}</td>
+        <td class="muted opt">${esc(e.ip)}</td>
       </tr>`).join('')
     : `<tr><td colspan="5" class="nodata">no rejected requests</td></tr>`;
 }

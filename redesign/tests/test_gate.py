@@ -12,6 +12,9 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from redesign.gate.checks import (
+    CLEAN_TEXT_EXPECTED,
+    FILLER_CHARS_PER_TOKEN,
+    FILLER_SENTENCES,
     CleanText,
     ExactAnswer,
     GreedyDeterminism,
@@ -130,6 +133,33 @@ class BrokenModelTest(GateTestCase):
         ScriptedModel.script = ["   "]
         self.assertFalse(CleanText().run(self.client).passed)
 
+    def test_fluent_garbage_without_the_requested_reply_is_caught(self):
+        """Q-2: printable Unicode is not a quality signal."""
+        ScriptedModel.script = ["the sky is green and 2+2=5"]
+        result = CleanText().run(self.client)
+        self.assertFalse(result.passed)
+        self.assertIn(CLEAN_TEXT_EXPECTED, result.detail)
+
+    def test_a_phrase_loop_is_caught(self):
+        """Q-3: 'the cat sat. ' × 200 has no adjacent identical word."""
+        ScriptedModel.script = ["the cat sat. " * 200]
+        result = NoDegenerateRepetition().run(self.client)
+        self.assertFalse(result.passed)
+        self.assertIn("phrase", result.detail)
+
+    def test_an_answer_that_only_echoes_the_premise_is_caught(self):
+        """Q-4: '12' appears in the syllogism prompt."""
+        ScriptedModel.script = [
+            "I cannot answer this question. The premise mentions 12 Blips."
+        ]
+        check = ExactAnswer(
+            prompt="If all Blips are Trids, and there are 12 Blips, "
+                   "at least how many Grons? End with the number alone.",
+            expected="12", label="syllogism",
+        )
+        result = check.run(self.client)
+        self.assertFalse(result.passed)
+
     def test_malformed_json_is_caught(self):
         ScriptedModel.script = ['{"city": "Delhi", "count": }']
         self.assertFalse(StructuredOutput().run(self.client).passed)
@@ -159,6 +189,21 @@ class RegistryTest(unittest.TestCase):
         prompt = check._build_prompt()
         position = prompt.index(check.CODE) / len(prompt)
         self.assertGreater(position, 0.7)
+
+    def test_a_128k_needle_is_actually_near_128k_tokens(self):
+        """Q-5: 4 chars/token built ~77k real tokens."""
+        check = NeedleRetrieval(128_000, 0.5)
+        estimated = check.estimated_prompt_tokens()
+        self.assertGreater(estimated, 110_000)
+        self.assertLess(estimated, 150_000)
+
+    def test_the_haystack_is_not_one_sentence_repeated(self):
+        """Q-6: a single repeated sentence is what KV compression handles best."""
+        check = NeedleRetrieval(8_000, 0.5)
+        prompt = check._build_prompt()
+        distinct = {s.strip() for s in FILLER_SENTENCES if s.strip() in prompt}
+        self.assertGreater(len(distinct), 1)
+        self.assertAlmostEqual(FILLER_CHARS_PER_TOKEN, 6.7)
 
 
 class ClientTest(unittest.TestCase):
