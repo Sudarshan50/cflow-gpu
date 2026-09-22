@@ -489,10 +489,16 @@ class InstalledLiteLLMTest(unittest.IsolatedAsyncioTestCase):
         import yaml
         from litellm.caching.caching import Cache
         from litellm.proxy._types import ConfigYAML
+        from litellm.types.router import Deployment
         config = yaml.safe_load(render(redis_host="unused.invalid"))
         # Config loader resolves env references before schema validation.
         validated = copy.deepcopy(config)
         validated["general_settings"]["coordination_redis"]["port"] = 6379
+        # ConfigYAML's legacy model_info schema enumerates old OpenAI base
+        # models. Validate deployments with the schema the running Router uses.
+        for deployment in validated["model_list"]:
+            Deployment(**deployment)
+        validated["model_list"] = []
         ConfigYAML.model_validate(validated)
         params = config["litellm_settings"]["cache_params"]
         for name in params:

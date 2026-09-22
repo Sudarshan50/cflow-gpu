@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import base64
 import unittest
+from unittest.mock import patch
 
-from redesign.gateway.media import NOTE, PNG_MAGIC, normalize_payload
+from redesign.gateway.media import NOTE, PNG_MAGIC, VIDEO_LIMIT_NOTE, normalize_payload
 
 PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
@@ -51,6 +52,64 @@ class MediaNormalizeTest(unittest.TestCase):
             "image_url": f"data:image/png;base64,{PNG_B64}",
         }))
         self.assertEqual(out["messages"][0]["content"][1]["type"], "image_url")
+
+    @patch("redesign.gateway.media._video_frames")
+    def test_video_becomes_bounded_timestamped_frames(self, frames):
+        frames.return_value = [
+            (base64.b64decode(PNG_B64), 0.0),
+            (base64.b64decode(PNG_B64), 2.5),
+        ]
+        video = base64.b64encode(b"video bytes").decode()
+        out = normalize_payload(_payload({
+            "type": "video_url",
+            "video_url": {"url": f"data:video/mp4;base64,{video}"},
+        }))
+        parts = out["messages"][0]["content"]
+        self.assertEqual(parts[1]["text"], "[video frame 1/2 at 00:00:00.000]")
+        self.assertEqual(parts[2]["type"], "image_url")
+        self.assertEqual(parts[3]["text"], "[video frame 2/2 at 00:00:02.500]")
+        self.assertEqual(parts[4]["type"], "image_url")
+        frames.assert_called_once_with(b"video bytes")
+
+    @patch("redesign.gateway.media._video_frames", return_value=[])
+    def test_unreadable_video_becomes_a_text_note(self, _frames):
+        out = normalize_payload(_payload({
+            "type": "input_video",
+            "video_url": "data:video/mp4;base64,bm90LXZpZGVv",
+        }))
+        self.assertEqual(out["messages"][0]["content"][1], {"type": "text", "text": NOTE})
+
+    @patch("redesign.gateway.media._video_frames")
+    def test_video_file_shape_is_recognized(self, frames):
+        frames.return_value = [(base64.b64decode(PNG_B64), 0.0)]
+        data = base64.b64encode(b"file video").decode()
+        out = normalize_payload(_payload({
+            "type": "file",
+            "file": {"filename": "clip.webm", "file_data": data},
+        }))
+        self.assertEqual(out["messages"][0]["content"][1]["type"], "text")
+        self.assertEqual(out["messages"][0]["content"][2]["type"], "image_url")
+        frames.assert_called_once_with(b"file video")
+
+    @patch("redesign.gateway.media._video_frames")
+    def test_only_one_video_is_decoded_per_request(self, frames):
+        frames.return_value = [(base64.b64decode(PNG_B64), 0.0)]
+        video = base64.b64encode(b"video bytes").decode()
+        part = {
+            "type": "video_url",
+            "video_url": {"url": f"data:video/mp4;base64,{video}"},
+        }
+        out = normalize_payload({
+            "messages": [
+                {"role": "user", "content": [part]},
+                {"role": "user", "content": [part]},
+            ],
+        })
+        self.assertEqual(frames.call_count, 1)
+        self.assertEqual(
+            out["messages"][1]["content"],
+            [{"type": "text", "text": VIDEO_LIMIT_NOTE}],
+        )
 
     def test_cache_salt_is_stripped_so_a_portal_pool_can_share_prefixes(self):
         payload = {

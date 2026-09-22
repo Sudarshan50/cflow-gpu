@@ -1,0 +1,106 @@
+{
+  "utc": "2026-09-21T08:52:55.857487+00:00",
+  "identity": {
+    "baseline_commit": "9f951e066358870466ce9875da63b174d5818b95",
+    "branch": "redesign/capacity-first",
+    "container_id": "aa49960d2490b2514fae0ff5a09b0c6d6b5ec3a9ee0e2bb9c67f624ffefae35d",
+    "started": "2026-09-21T08:48:50.40436456Z",
+    "image": "johnqin2025/kimi-k3-dspark@sha256:5f3007aff1bc231eceb9f024e56ee80e44f9ca101a521aa50fe6bfa6c979d6b8",
+    "config": {
+      "served-model-name": [
+        "FW-Kimi-K3",
+        "kimi-k3",
+        "moonshotai/Kimi-K3"
+      ],
+      "host": "127.0.0.1",
+      "port": 8001,
+      "trust-remote-code": true,
+      "tensor-parallel-size": 8,
+      "no-enable-expert-parallel": true,
+      "load-format": "auto",
+      "mm-encoder-tp-mode": "data",
+      "kv-cache-dtype": "auto",
+      "enable-prefix-caching": true,
+      "max-num-seqs": 64,
+      "max-num-batched-tokens": 4096,
+      "gpu-memory-utilization": 0.88,
+      "max-model-len": 262144,
+      "scheduling-policy": "priority",
+      "enable-prompt-tokens-details": true,
+      "reasoning-parser": "kimi_k3",
+      "tool-call-parser": "kimi_k3",
+      "enable-auto-tool-choice": true,
+      "no-enable-log-requests": true
+    }
+  },
+  "cache_config": {
+    "_block_size_resolved": "True",
+    "block_size": "768",
+    "cache_dtype": "auto",
+    "calculate_kv_scales": "False",
+    "enable_prefix_caching": "True",
+    "engine": "0",
+    "gpu_memory_utilization": "0.88",
+    "is_attention_free": "False",
+    "kv_cache_dtype_skip_layers": "[]",
+    "kv_cache_max_concurrency": "6.255747126436781",
+    "kv_cache_memory_bytes": "None",
+    "kv_cache_size_tokens": "1639906",
+    "kv_offloading_backend": "native",
+    "kv_offloading_size": "None",
+    "kv_sharing_fast_prefill": "False",
+    "mamba_block_size": "16",
+    "mamba_cache_dtype": "auto",
+    "mamba_cache_mode": "align",
+    "mamba_page_size_padded": "None",
+    "mamba_ssm_cache_dtype": "auto",
+    "num_cpu_blocks": "None",
+    "num_gpu_blocks": "2177",
+    "num_gpu_blocks_override": "None",
+    "prefix_caching_hash_algo": "sha256",
+    "prefix_match_unit": "None",
+    "replayssm_buffer_len": "16",
+    "skip_page_size_padded": "None",
+    "sliding_window": "None",
+    "use_replayssm": "False",
+    "user_specified_block_size": "False",
+    "user_specified_mamba_block_size": "False"
+  },
+  "installed_baseline_files_verified": 100,
+  "services": {
+    "k3": {
+      "NRestarts": "0",
+      "ActiveState": "active",
+      "SubState": "running",
+      "DropInPaths": "/etc/systemd/system/k3.service.d/60-amd-optimized.conf",
+      "ActiveEnterTimestamp": "Mon 2026-09-21 08:48:50 UTC"
+    },
+    "k3-gateway": {
+      "NRestarts": "0",
+      "ActiveState": "active",
+      "SubState": "running",
+      "DropInPaths": "/etc/systemd/system/k3-gateway.service.d/60-amd-optimized.conf",
+      "ActiveEnterTimestamp": "Mon 2026-09-21 07:55:36 UTC"
+    },
+    "k3-litellm": {
+      "NRestarts": "0",
+      "ActiveState": "active",
+      "SubState": "running",
+      "DropInPaths": "/etc/systemd/system/k3-litellm.service.d/60-amd-optimized.conf",
+      "ActiveEnterTimestamp": "Mon 2026-09-21 07:55:36 UTC"
+    }
+  },
+  "control_plane_images": {
+    "k3-gateway": "k3-python:24.04",
+    "k3-litellm": "k3-python:24.04"
+  },
+  "response_cache_revision": "amd-5f3007-base-v1",
+  "health": {
+    "engine": 200,
+    "gateway": 200,
+    "litellm": 200
+  },
+  "channel_285_status": 2,
+  "engine_idle": true,
+  "verified": true
+}

@@ -1,0 +1,148 @@
+KVV-style health check
+  endpoint : http://127.0.0.1:8001/v1
+  model    : FW-Kimi-K3
+  key      : evalbot (redacted)
+  sections : A,B,C,D,E,F,G,H,I,J,K,L,M,N
+
+A. Basic protocol
+  [PASS] A1     GET /v1/models returns target model                  http 200 names=['FW-Kimi-K3', 'kimi-k3', 'moonshotai/Kimi-K3']
+  [PASS] A2     Non-streaming chat structure                         http 200 finish=stop content='Hello' 2.4s
+  [PASS] A3     Streaming chat frames + [DONE]                       http 200 frames=301 done=True 
+  [PASS] A4     Response model field echo                            echoed='FW-Kimi-K3' expected='FW-Kimi-K3'
+  [PASS] A5     Unknown fields in message object are ignored         http 200 accepted
+  [PASS] A6     Unknown model name returns 4xx                       http 404 (reference platform returned 503 and was flagged)
+  [PASS] A7     /v1/embeddings behaviour documented                  http 404 - no embedding model is served here
+  [PASS] A8     Video input rejected with a clear error              http 400 At most 0 video(s) may be provided in one prompt. (parameter=video)
+
+B. Parameter validation
+  [PASS] B1     temperature=0 accepted                               http 200 want=2xx 
+  [PASS] B2     temperature=2 accepted                               http 200 want=2xx 
+  [PASS] B3     temperature=3 rejected                               http 400 want=4xx 
+  [PASS] B4     temperature=-1 rejected                              http 400 want=4xx 
+  [PASS] B5     top_p=0.1 accepted                                   http 200 want=2xx 
+  [PASS] B6     top_p=1.5 rejected                                   http 400 want=4xx 
+  [PASS] B7     frequency_penalty=2 accepted                         http 200 want=2xx 
+  [PASS] B8     frequency_penalty=5 rejected                         http 400 want=4xx 
+  [PASS] B9     presence_penalty=-2 accepted                         http 200 want=2xx 
+  [PASS] B10    negative max_tokens rejected                         http 400 want=4xx 
+  [PASS] B11    unknown parameter ignored                            http 200 want=2xx 
+  [PASS] B12    max_tokens=16 truncates                              http 200 completion_tokens=16 finish=length
+  [FAIL] B13    empty messages rejected                              http 200
+  [PASS] B14    stop sequence honoured                               http 200 content='The user has just provided a list: "alpha '
+  [WARN] B15    seed reproducibility                                 same=False a='Lantern' b='Lighthouse'
+  [PASS] B16    n=2 multiple candidates                              http 200 choices=2 (reference platform: 65/65 rejected n>1)
+  [PASS] B17    oversized max_tokens handled cleanly                 http 400 max_tokens=99999999 cannot be greater than max_model_len=max_total_tokens=262144. Please request fewer output tokens. (p
+  [PASS] B18    logprobs returned when requested                     http 200 logprobs=present (reference platform: only 14/65 channels)
+
+C. Tool calling
+  [PASS] C1     tool_choice=auto produces a call                     http 200 calls=1
+  [PASS] C2     tool_choice=none suppresses calls                    http 200 calls=0
+  [PASS] C3     tool_choice=specific function forces that tool       http 200 calls=['get_weather']
+  [PASS] C4     tool_choice=required 5/5                             5/5 produced a tool call
+  [PASS] C5     nested schema arguments conform                      http 200 args={"traveller": {"name": "Ada", "age": 36}, "legs": [{"from": "Delhi", "to": "Tokyo", "cabin": "business"}, {"from": "Tokyo", "t
+  [PASS] C6     correct routing among 20 tools                       http 200 picked=['get_weather']
+  [PASS] C7     parallel_tool_calls returns multiple calls           http 200 calls=2
+  [PASS] C8     multi-turn tool result consumed                      http 200 content='The current weather in Lisbon is **19°C** with **clear skies** — a lovely day! ☀️'
+  [PASS] C9     streamed tool_calls reassemble                       http 200 name=get_weather args='{"city": "Berlin", "unit": "c"}'
+  [PASS] C10    tool_call object shape is OpenAI-conformant          http 200 shape_ok=True
+
+D. Structured output
+  [PASS] D1     response_format=json_object returns valid JSON       http 200 body='{"city": "Paris", "country": "France"}'
+  [PASS] D2     json_schema strict conforms exactly                  http 200 body='{"city":"Paris","population":2100000,"landmarks":["Eiffel Tower","Louvre Museum","Notre-Dame Cathedral","Arc de Triomphe","Sa
+  [PASS] D3     $ref / $defs schema accepted                         http 200 ok
+
+E. Reasoning control
+  [PASS] E0     default request reports reasoning_tokens             http 200 reasoning_tokens=None reasoning_len=165
+  [PASS] E1     reasoning_effort=none                                http 200 reasoning_tokens=None
+  [PASS] E2     reasoning_effort=low                                 http 200 reasoning_tokens=None
+  [WARN] E3     reasoning_effort=medium                              http 500 Unsupported thinking_effort='medium'; supported values are ['high', 'low', 'max']. (capability boundary)
+  [PASS] E4     reasoning_effort=high                                http 200 reasoning_tokens=None
+  [WARN] E5     reasoning_effort=xhigh                               http 500 Unsupported thinking_effort='xhigh'; supported values are ['high', 'low', 'max']. (capability boundary)
+  [PASS] E6     reasoning_effort=max                                 http 200 reasoning_tokens=None
+  [WARN] E7     reasoning_effort=minimal                             http 500 Unsupported thinking_effort='minimal'; supported values are ['high', 'low', 'max']. (capability boundary)
+  [WARN] E8     reasoning_effort=adaptive                            http 400 1 validation error:
+  {'type': 'literal_error', 'loc': ('body', 'reasoning_effort'), 'msg': "Input should be ' (capability boundary
+  [SKIP] E9     reasoning_tokens grow with effort level              observed=[] monotonic=None
+  [WARN] E10    disable thinking via enable_thinking=false           http 200 reasoning_tokens=None reasoning_len=119
+  [WARN] E11    disable thinking via thinking.type=disabled          http 200 reasoning_tokens=None reasoning_len=142
+  [PASS] E12    disable thinking via chat_template_kwargs.thinking=f http 200 reasoning_tokens=None reasoning_len=0
+  [PASS] E13    disable thinking via reasoning_effort=none           http 200 reasoning_tokens=None reasoning_len=0
+  [PASS] E14    thinking.budget_tokens=128 behaviour                 http 200 accepted
+
+F. Streaming quality
+  [PASS] F1     stream_options.include_usage delivers usage          http 200 usage={"prompt_tokens": 92, "total_tokens": 165, "completion_tokens": 73, "prompt_tokens_details": {"cached_tokens": 0, "created_ca
+  [PASS] F2     SSE frame structure is standard                      frames=64 done=True objects_ok=True
+  [PASS] F3     streaming and non-streaming agree                    streamed=426 chars nonstream=425 chars match_head=True
+  [PASS] F4     long stream does not drop frames                     http 200 frames=3104 chars=8074 done=True
+
+G. Usage reporting
+  [PASS] G1     prompt_tokens scale linearly with input              points=[(10, 195), (20, 295), (40, 495)] max_deviation=0.0
+  [PASS] G2     prompt+completion equals total                       usage={"prompt_tokens": 91, "total_tokens": 229, "completion_tokens": 138, "prompt_tokens_details": {"cached_tokens": 0, "created_cache_toke
+  [PASS] G3     cached_tokens reported for a repeated prefix         cached_tokens=2304 prompt_tokens=2504
+  [PASS] G4     streaming and non-streaming prompt_tokens identical  nonstream=96 stream=96
+  [PASS] G5     truncated completion_tokens equals max_tokens        completion_tokens=32 max_tokens=32
+
+H. Multimodal
+  [PASS] H1     base64 single image recognised                       http 200 answer='Red'
+  [PASS] H2     multiple images counted                              http 200 answer='2'
+  [WARN] H3     remote URL image fetched                             http 422 answer=''
+  [PASS] H4     image_url.detail accepted                            http 200 ok
+  [PASS] H5     stray image_url.MimeType key tolerated               http 200 {'id': 'chatcmpl-bc20a533420014f5', 'object': 'chat.completion', 'created': 1790010676, 'model': 'FW-Kimi-K3', (reference platform 
+
+I. Long context
+  [PASS] I1     needle retrieval in long context                     http 200 prompt_tokens=21717 answer='74812' 3.0s
+  [PASS] I2     large input (~90k words) handled                     http 200 prompt_tokens=90093 10.5s 
+  [PASS] I3     over-limit request returns clean 400, engine survive http 400 0.1s This model's maximum context length is 262144 tokens. However, you requested 600 output tokens and your prompt contains 
+  [PASS] I4     engine still healthy after the over-limit probe      GET /v1/models http 200
+
+J. Protocol and error semantics
+  [FAIL] J1     invalid key returns 401                              http 200
+  [WARN] J2     Anthropic /v1/messages surface                       http 200 - not served here; edge allowlists /v1/ only
+  [PASS] J3     /v1/responses surface                                http 200 available
+  [PASS] J4     anyOf tool schema consistent across endpoints        chat=200 responses=200 (reference platform P1-3 mismatch)
+  [WARN] J5     developer role accepted                              http 400 Unknown message role 'developer' at index 0.
+
+K. Concurrency
+  [PASS] K1     6x concurrent x 12 requests                          ok=12/12 wall=49.6s p50=19.513s p95=24.422s
+  [PASS] K2     no throttling or server errors under test load       status spread={200: 12}
+
+L. Consistency
+  [PASS] L1     prompt_tokens identical across 6 repeats             values=[95]
+  [PASS] L2     every customer key sees the same model and billing   per_key={"evalbot": {"http": 200, "prompt_tokens": 95, "model": "FW-Kimi-K3"}}
+  [PASS] L3     served-model aliases both advertised                 names=['FW-Kimi-K3', 'kimi-k3', 'moonshotai/Kimi-K3'] (config.yaml keeps the legacy alias deliberately)
+  [PASS] L4     legacy alias 'kimi-k3' still serves                  http 200
+
+M. Message shapes and roles
+  [PASS] M1     content-array text shape accepted                    http 200
+  [PASS] M2     system role accepted                                 http 200 content='ok'
+  [PASS] M3     orphan tool message without assistant turn           http 400 Kimi K3 tool messages need a resolvable tool name: carry `tool`/`name`, or match a preceding assistant tool_ca
+  [PASS] M4     message .name field accepted                         http 200
+  [PASS] M5     assistant history with vendor reasoning field round- http 200 {'id': 'chatcmpl-809dbd3cb65e9185', 'object': 'chat.completion', 'created': 1790010761, 'model': 'FW-Kimi-K3', (reference platform 
+  [PASS] M6     assistant history with reasoning_content round-trips http 200 {'id': 'chatcmpl-9dd0139dc615d69f', 'object': 'chat.completion', 'created': 1790010762, 'model': 'FW-Kimi-K3',
+  [PASS] M7     unknown vendor extension web_search_options          http 200 {'id': 'chatcmpl-b06f8dd07cffa169', 'object': 'chat.completion', 'created': 1790010763, 'model': 'FW-Kimi-K3',
+  [PASS] M8     invalid role rejected                                http 400
+
+N. Reasoning budget
+  [PASS] N1     content present at every budget                      rows=[{"max_tokens": 2000, "http": 200, "reasoning_tokens": null, "completion_tokens": 136, "content_chars": 197, "correct": true}, {"max_to
+  [PASS] N2     answer correct across budgets                        correct=[True, True, True]
+  [PASS] N3     small max_tokens can starve visible content          max_tokens=40 content='The user is asking a simple factual question: What is the ca' reasoning_tokens=None - reference report §7 recheck #1 
+  [PASS] N4     reasoning_effort=none frees the budget for content   content="The capital of France is Paris. It's not only the political " reasoning_tokens=None
+
+====================================================================
+total=95  PASS=82  WARN=10  FAIL=2  SKIP=1   in 282.0s
+====================================================================
+  FAIL  B13    empty messages rejected :: http 200
+  WARN  B15    seed reproducibility :: same=False a='Lantern' b='Lighthouse'
+  WARN  E3     reasoning_effort=medium :: http 500 Unsupported thinking_effort='medium'; supported values are ['high', 'low', 'max']. (capability boundary)
+  WARN  E5     reasoning_effort=xhigh :: http 500 Unsupported thinking_effort='xhigh'; supported values are ['high', 'low', 'max']. (capability boundary)
+  WARN  E7     reasoning_effort=minimal :: http 500 Unsupported thinking_effort='minimal'; supported values are ['high', 'low', 'max']. (capability boundary)
+  WARN  E8     reasoning_effort=adaptive :: http 400 1 validation error:
+  {'type': 'literal_error', 'loc': ('body', 'reasoning_effort'), 'msg': "Input should be ' 
+  WARN  E10    disable thinking via enable_thinking=false :: http 200 reasoning_tokens=None reasoning_len=119
+  WARN  E11    disable thinking via thinking.type=disabled :: http 200 reasoning_tokens=None reasoning_len=142
+  WARN  H3     remote URL image fetched :: http 422 answer=''
+  FAIL  J1     invalid key returns 401 :: http 200
+  WARN  J2     Anthropic /v1/messages surface :: http 200 - not served here; edge allowlists /v1/ only
+  WARN  J5     developer role accepted :: http 400 Unknown message role 'developer' at index 0.
+
+wrote /root/cflow-gpu/eval/runs/20260921T170500Z-kvv-engine/health_results.json

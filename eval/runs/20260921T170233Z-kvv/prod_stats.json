@@ -1,0 +1,174 @@
+{
+  "collected_utc": "2026-09-21T17:02:50Z",
+  "log_sources": [
+    "/var/log/k3/usage.log"
+  ],
+  "rows_parsed": 0,
+  "oldest_row_utc": null,
+  "newest_row_utc": null,
+  "coverage_seconds": 0,
+  "windows": {
+    "1h": {
+      "window": "1h",
+      "window_seconds": 3600,
+      "requests": 0,
+      "successful": 0,
+      "failures": 0,
+      "failure_rate": null,
+      "server_error_rate": null,
+      "requests_per_minute": 0.0,
+      "status_spread": {},
+      "failure_causes": [],
+      "per_customer": [],
+      "per_path": [],
+      "edge_latency_s": {
+        "p50": null,
+        "p90": null,
+        "p95": null,
+        "p99": null
+      },
+      "bytes_in": 0,
+      "bytes_out": 0,
+      "partial": true,
+      "actual_coverage_seconds": 0
+    },
+    "3h": {
+      "window": "3h",
+      "window_seconds": 10800,
+      "requests": 0,
+      "successful": 0,
+      "failures": 0,
+      "failure_rate": null,
+      "server_error_rate": null,
+      "requests_per_minute": 0.0,
+      "status_spread": {},
+      "failure_causes": [],
+      "per_customer": [],
+      "per_path": [],
+      "edge_latency_s": {
+        "p50": null,
+        "p90": null,
+        "p95": null,
+        "p99": null
+      },
+      "bytes_in": 0,
+      "bytes_out": 0,
+      "partial": true,
+      "actual_coverage_seconds": 0
+    },
+    "24h": {
+      "window": "24h",
+      "window_seconds": 86400,
+      "requests": 0,
+      "successful": 0,
+      "failures": 0,
+      "failure_rate": null,
+      "server_error_rate": null,
+      "requests_per_minute": 0.0,
+      "status_spread": {},
+      "failure_causes": [],
+      "per_customer": [],
+      "per_path": [],
+      "edge_latency_s": {
+        "p50": null,
+        "p90": null,
+        "p95": null,
+        "p99": null
+      },
+      "bytes_in": 0,
+      "bytes_out": 0,
+      "partial": true,
+      "actual_coverage_seconds": 0
+    }
+  },
+  "engine": {
+    "note": "counters are cumulative since the last engine start, not windowed",
+    "engine_start_utc": "2026-09-21T16:45:20Z",
+    "requests_success_total": 68.0,
+    "prompt_tokens_total": 4317644.0,
+    "generation_tokens_total": 13921.0,
+    "prompt_tokens_cached_total": 164352.0,
+    "cached_token_share": 0.0381,
+    "prefix_cache_queries_total": 4317644.0,
+    "prefix_cache_hits_total": 164352.0,
+    "prefix_cache_hit_rate": 0.0381,
+    "preemptions_total": 0.0,
+    "requests_running": 0.0,
+    "requests_waiting": 0.0,
+    "kv_cache_usage_perc": 0.0,
+    "tool_call_parser_invocations_total": 4397.0,
+    "latency_seconds": {
+      "ttft": {
+        "0.5": 13.125,
+        "0.9": 118.5,
+        "0.95": 139.25,
+        "0.99": 155.85
+      },
+      "tpot": {
+        "0.5": 0.2158,
+        "0.9": 0.3862,
+        "0.95": 0.4533,
+        "0.99": 0.665
+      },
+      "itl": {
+        "0.5": 0.0429,
+        "0.9": 0.4369,
+        "0.95": 0.485,
+        "0.99": 1.2343
+      },
+      "e2e": {
+        "0.5": 32.5,
+        "0.9": 177.2308,
+        "0.95": 208.6154,
+        "0.99": 233.7231
+      },
+      "queue": {
+        "0.5": 0.2757,
+        "0.9": 32.4,
+        "0.95": 39.2,
+        "0.99": 79.2
+      },
+      "prefill": {
+        "0.5": 1.2917,
+        "0.9": 20.2857,
+        "0.95": 25.1429,
+        "0.99": 29.0286
+      },
+      "decode": {
+        "0.5": 17.5,
+        "0.9": 149.3333,
+        "0.95": 194.6667,
+        "0.99": 230.9333
+      }
+    },
+    "request_shape": {
+      "prompt_tokens": {
+        "0.5": 4526.3158,
+        "0.9": 200000.0,
+        "0.95": 200000.0,
+        "0.99": 200000.0
+      },
+      "generation_tokens": {
+        "0.5": 135.2941,
+        "0.9": 787.5,
+        "0.95": 893.75,
+        "0.99": 978.75
+      },
+      "client_max_tokens": {
+        "0.5": 700.0,
+        "0.9": 1100.0,
+        "0.95": 3600.0,
+        "0.99": 16600.0
+      },
+      "iteration_tokens": {
+        "0.5": 0.7487,
+        "0.9": 7.4486,
+        "0.95": 11.7286,
+        "0.99": 2617.8259
+      }
+    }
+  },
+  "caveats": [
+    "Access-log coverage is 0 s; any window longer than that is partial, not a full-period measurement."
+  ]
+}

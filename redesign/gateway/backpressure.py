@@ -122,8 +122,15 @@ class ClassBudget:
         with self._lock:
             return self._in_flight.get(traffic_class.name, 0)
 
-    def try_acquire(self, traffic_class: TrafficClass) -> bool:
+    def try_acquire(
+        self, traffic_class: TrafficClass, borrow_limit: int | None = None
+    ) -> bool:
         limit = self.limit_for(traffic_class)
+        if borrow_limit is not None:
+            # Class shares are protected baseline capacity, not a reason to
+            # strand an otherwise idle pooled replica. The global ceiling
+            # remains an unconditional safety bound.
+            limit = max(limit, min(self.ceiling, borrow_limit))
         if limit <= 0:
             return False
         with self._lock:

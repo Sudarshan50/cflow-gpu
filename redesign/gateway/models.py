@@ -43,6 +43,12 @@ class EngineSnapshot:
     running: int
     waiting: int
     preemptions_per_minute: float
+    kv_capacity_tokens: int | None = None
+    cache_epoch: float | None = None
+    sampled_at: float | None = None
+    mean_itl_seconds: float | None = None
+    mean_ttft_seconds: float | None = None
+    mean_prefill_seconds: float | None = None
 
     @classmethod
     def healthy(cls) -> "EngineSnapshot":
@@ -76,6 +82,10 @@ class Decision:
     reason: str
     retry_after_seconds: int | None = None
     notes: tuple[str, ...] = field(default_factory=tuple)
+    workload_lease: int | None = None
+    admission_wait_seconds: float = 0.0
+    admission_queued: bool = False
+    admission_reason: str = ""
 
     @property
     def admitted(self) -> bool:

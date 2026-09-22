@@ -1,0 +1,179 @@
+{
+  "baseline_commit": "9f951e066358870466ce9875da63b174d5818b95",
+  "workload_version": "mixed-prefill-v1",
+  "matched_request_pairs": 56,
+  "comparison_status": "completed-phases-only",
+  "included_concurrencies": [
+    4,
+    8
+  ],
+  "excluded_concurrencies": [
+    16
+  ],
+  "source_trial_failures": {
+    "baseline": null,
+    "candidate": "RuntimeError: Intended warm prefix was not available"
+  },
+  "exact_benchmark_output_hash_matches": 3,
+  "effective_cache_blocks": "2177",
+  "correctness_checks_per_arm": 10,
+  "cases": {
+    "c4-warm": {
+      "baseline": {
+        "rounds": 2,
+        "warm_requests": 8,
+        "cold_requests": 0,
+        "aggregate_output_tps": 120.71963705035719,
+        "warm_e2e_p50": 8.4553787094992,
+        "warm_e2e_p95": 8.602601974997379,
+        "warm_after_first_tps_p50": 31.635385812513125,
+        "warm_stream_p95_gap_median": 0.041928032051509925,
+        "warm_stream_max_gap": 0.48158821200195234,
+        "cold_ttft_p50": null,
+        "cold_ttft_max": null,
+        "median_round_engine_itl_p95": 0.049844234454396695
+      },
+      "batch2048": {
+        "rounds": 2,
+        "warm_requests": 8,
+        "cold_requests": 0,
+        "aggregate_output_tps": 137.0827966777477,
+        "warm_e2e_p50": 7.442798540992953,
+        "warm_e2e_p95": 8.054573161750886,
+        "warm_after_first_tps_p50": 37.031570783413216,
+        "warm_stream_p95_gap_median": 0.02885019240347901,
+        "warm_stream_max_gap": 0.4024226629990153,
+        "cold_ttft_p50": null,
+        "cold_ttft_max": null,
+        "median_round_engine_itl_p95": 0.04853852952288429
+      },
+      "batch2048_change_percent": {
+        "aggregate_output_tps": 13.554679277709191,
+        "warm_e2e_p50": -11.975574404120582,
+        "warm_e2e_p95": -6.370500632707232,
+        "warm_after_first_tps_p50": 17.057433732215376,
+        "warm_stream_p95_gap_median": -31.19116020509708,
+        "warm_stream_max_gap": -16.438431637237848
+      }
+    },
+    "c4-mixed": {
+      "baseline": {
+        "rounds": 2,
+        "warm_requests": 8,
+        "cold_requests": 4,
+        "aggregate_output_tps": 34.22682535479512,
+        "warm_e2e_p50": 31.761168450000696,
+        "warm_e2e_p95": 32.40684377869111,
+        "warm_after_first_tps_p50": 8.159255689087665,
+        "warm_stream_p95_gap_median": 0.37191817230122975,
+        "warm_stream_max_gap": 1.1948594439891167,
+        "cold_ttft_p50": 19.44306416350446,
+        "cold_ttft_max": 26.00782307398913,
+        "median_round_engine_itl_p95": 0.3901195322090844
+      },
+      "batch2048": {
+        "rounds": 2,
+        "warm_requests": 8,
+        "cold_requests": 4,
+        "aggregate_output_tps": 25.19676060238226,
+        "warm_e2e_p50": 43.15323857399926,
+        "warm_e2e_p95": 43.88901988945072,
+        "warm_after_first_tps_p50": 5.9826127377869085,
+        "warm_stream_p95_gap_median": 0.2583924256003224,
+        "warm_stream_max_gap": 0.8726142259984044,
+        "cold_ttft_p50": 30.210070199995243,
+        "cold_ttft_max": 40.27487650299736,
+        "median_round_engine_itl_p95": 0.2991066627677589
+      },
+      "batch2048_change_percent": {
+        "aggregate_output_tps": -26.383004146038225,
+        "warm_e2e_p50": 35.86791884540481,
+        "warm_e2e_p95": 35.431331076769744,
+        "warm_after_first_tps_p50": -26.676979301087943,
+        "warm_stream_p95_gap_median": -30.524388200358988,
+        "warm_stream_max_gap": -26.96929915998115,
+        "cold_ttft_p50": 55.37710489430445,
+        "cold_ttft_max": 54.856776702995006
+      }
+    },
+    "c8-warm": {
+      "baseline": {
+        "rounds": 2,
+        "warm_requests": 16,
+        "cold_requests": 0,
+        "aggregate_output_tps": 242.0564695949902,
+        "warm_e2e_p50": 8.414274499504245,
+        "warm_e2e_p95": 8.568888437257556,
+        "warm_after_first_tps_p50": 32.2370468378093,
+        "warm_stream_p95_gap_median": 0.03100803915731375,
+        "warm_stream_max_gap": 0.6273034290061332,
+        "cold_ttft_p50": null,
+        "cold_ttft_max": null,
+        "median_round_engine_itl_p95": 0.049090555417812945
+      },
+      "batch2048": {
+        "rounds": 2,
+        "warm_requests": 16,
+        "cold_requests": 0,
+        "aggregate_output_tps": 240.55772608269686,
+        "warm_e2e_p50": 8.482012177002616,
+        "warm_e2e_p95": 9.188915963750333,
+        "warm_after_first_tps_p50": 31.726352693716287,
+        "warm_stream_p95_gap_median": 0.03716004260277257,
+        "warm_stream_max_gap": 0.41913553699851036,
+        "cold_ttft_p50": null,
+        "cold_ttft_max": null,
+        "median_round_engine_itl_p95": 0.04929718678442918
+      },
+      "batch2048_change_percent": {
+        "aggregate_output_tps": -0.619171020217324,
+        "warm_e2e_p50": 0.8050328938325357,
+        "warm_e2e_p95": 7.235798797390047,
+        "warm_after_first_tps_p50": -1.5841840186615608,
+        "warm_stream_p95_gap_median": 19.84002733693586,
+        "warm_stream_max_gap": -33.18456147090304
+      }
+    },
+    "c8-mixed": {
+      "baseline": {
+        "rounds": 2,
+        "warm_requests": 16,
+        "cold_requests": 4,
+        "aggregate_output_tps": 64.38721793384008,
+        "warm_e2e_p50": 32.76753495149751,
+        "warm_e2e_p95": 33.31070892350181,
+        "warm_after_first_tps_p50": 7.9111513272113285,
+        "warm_stream_p95_gap_median": 0.3784313686468521,
+        "warm_stream_max_gap": 0.9862874870013911,
+        "cold_ttft_p50": 19.527907972005778,
+        "cold_ttft_max": 25.944545860998915,
+        "median_round_engine_itl_p95": 0.3934372561183039
+      },
+      "batch2048": {
+        "rounds": 2,
+        "warm_requests": 16,
+        "cold_requests": 4,
+        "aggregate_output_tps": 48.50530341628195,
+        "warm_e2e_p50": 43.50995730000432,
+        "warm_e2e_p95": 43.9548131032534,
+        "warm_after_first_tps_p50": 5.935125623598573,
+        "warm_stream_p95_gap_median": 0.29147538889665114,
+        "warm_stream_max_gap": 0.8177576059970306,
+        "cold_ttft_p50": 30.547528646995488,
+        "cold_ttft_max": 41.109258864991716,
+        "median_round_engine_itl_p95": 0.31967996987951774
+      },
+      "batch2048_change_percent": {
+        "aggregate_output_tps": -24.666253686993134,
+        "warm_e2e_p50": 32.783736599068966,
+        "warm_e2e_p95": 31.954000751517555,
+        "warm_after_first_tps_p50": -24.977726020939382,
+        "warm_stream_p95_gap_median": -22.97800524864716,
+        "warm_stream_max_gap": -17.087297894931396,
+        "cold_ttft_p50": 56.43011371615885,
+        "cold_ttft_max": 58.4504854517
+      }
+    }
+  },
+  "scope": "Fixed-work synthetic tests; visible streaming gaps and cold-request latency are reported together."
+}

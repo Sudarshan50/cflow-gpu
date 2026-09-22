@@ -18,6 +18,7 @@ exec /usr/bin/docker run --rm --name k3-dash --network host --user 0:0 \
   -e DASH_ADDR="${DASH_ADDR:-0.0.0.0}" \
   -e DASH_PORT="${DASH_PORT:-8080}" \
   -e VLLM_BASE_URL="${VLLM_BASE_URL:-http://127.0.0.1:8001}" \
+  -e GATEWAY_METRICS_URL="${GATEWAY_METRICS_URL:-http://127.0.0.1:8002/metrics}" \
   -e PUBLIC_URL="${PUBLIC_URL:-https://api.cflowx.in/v1}" \
   -e ACCESS_LOG="${ACCESS_LOG:-/var/log/k3/usage.log}" \
   -e GPU_METRICS_URL="${GPU_METRICS_URL:-http://127.0.0.1:5000/metrics}" \

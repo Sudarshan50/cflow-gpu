@@ -1,0 +1,1 @@
+./collect.sh: line 66: ./verify-auth.sh: No such file or directory

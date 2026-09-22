@@ -22,7 +22,7 @@ args=(
 
 while IFS='=' read -r key _; do
   case "$key" in
-    K3_*|REDIS_*|UI_*|LITELLM_*|DATABASE_*|HOME|XDG_*|DISABLE_*|POSTGRES_*)
+    K3_*|REDIS_*|UI_*|LITELLM_*|DATABASE_*|HOME|XDG_*|DISABLE_*|POSTGRES_*|STORE_MODEL_IN_DB)
       args+=(-e "$key")
       ;;
   esac

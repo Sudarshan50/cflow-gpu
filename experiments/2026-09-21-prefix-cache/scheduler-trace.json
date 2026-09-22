@@ -1,0 +1,256 @@
+{
+  "source": "/proc/1093212/root/usr/local/lib/python3.12/dist-packages/vllm/v1/core/sched/scheduler.py",
+  "source_sha256": "cd5f7395386eff6275214c92deca64ec224e174e89e1fd88d3d4da1be491364e",
+  "scope": "Text-only scheduling boundaries, not GPU execution",
+  "cases": {
+    "cold-7675": {
+      "baseline": {
+        "initial_cache_hit": 0,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          3840,
+          6912,
+          7675
+        ],
+        "prefill_steps": 3
+      },
+      "tail128": {
+        "initial_cache_hit": 0,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          3840,
+          6912,
+          7552,
+          7675
+        ],
+        "prefill_steps": 4
+      }
+    },
+    "second-sibling-2304": {
+      "baseline": {
+        "initial_cache_hit": 0,
+        "shared_boundary": 2304,
+        "chunk_ends": [
+          2304,
+          6144,
+          6912,
+          7675
+        ],
+        "prefill_steps": 4
+      },
+      "tail128": {
+        "initial_cache_hit": 0,
+        "shared_boundary": 2304,
+        "chunk_ends": [
+          2304,
+          6144,
+          6912,
+          7552,
+          7675
+        ],
+        "prefill_steps": 5
+      }
+    },
+    "warm-sibling-2304": {
+      "baseline": {
+        "initial_cache_hit": 2304,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          6144,
+          6912,
+          7675
+        ],
+        "prefill_steps": 3
+      },
+      "tail128": {
+        "initial_cache_hit": 2304,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          6144,
+          6912,
+          7552,
+          7675
+        ],
+        "prefill_steps": 4
+      }
+    },
+    "cold-988": {
+      "baseline": {
+        "initial_cache_hit": 0,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          768,
+          988
+        ],
+        "prefill_steps": 2
+      },
+      "tail128": {
+        "initial_cache_hit": 0,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          768,
+          896,
+          988
+        ],
+        "prefill_steps": 3
+      }
+    },
+    "warm-988": {
+      "baseline": {
+        "initial_cache_hit": 768,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          988
+        ],
+        "prefill_steps": 1
+      },
+      "tail128": {
+        "initial_cache_hit": 896,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          988
+        ],
+        "prefill_steps": 1
+      }
+    },
+    "cold-1024": {
+      "baseline": {
+        "initial_cache_hit": 0,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          768,
+          1024
+        ],
+        "prefill_steps": 2
+      },
+      "tail128": {
+        "initial_cache_hit": 0,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          768,
+          1024
+        ],
+        "prefill_steps": 2
+      }
+    },
+    "warm-1024": {
+      "baseline": {
+        "initial_cache_hit": 768,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          1024
+        ],
+        "prefill_steps": 1
+      },
+      "tail128": {
+        "initial_cache_hit": 768,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          1024
+        ],
+        "prefill_steps": 1
+      }
+    },
+    "cold-7680": {
+      "baseline": {
+        "initial_cache_hit": 0,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          3840,
+          7680
+        ],
+        "prefill_steps": 2
+      },
+      "tail128": {
+        "initial_cache_hit": 0,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          3840,
+          7680
+        ],
+        "prefill_steps": 2
+      }
+    },
+    "first-replay-7680": {
+      "baseline": {
+        "initial_cache_hit": 3840,
+        "shared_boundary": 6912,
+        "chunk_ends": [
+          6912,
+          7680
+        ],
+        "prefill_steps": 2
+      },
+      "tail128": {
+        "initial_cache_hit": 3840,
+        "shared_boundary": 6912,
+        "chunk_ends": [
+          6912,
+          7680
+        ],
+        "prefill_steps": 2
+      }
+    },
+    "warm-replay-7680": {
+      "baseline": {
+        "initial_cache_hit": 6912,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          7680
+        ],
+        "prefill_steps": 1
+      },
+      "tail128": {
+        "initial_cache_hit": 6912,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          7680
+        ],
+        "prefill_steps": 1
+      }
+    },
+    "cold-stable-chat": {
+      "baseline": {
+        "initial_cache_hit": 0,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          3840,
+          7680,
+          8448,
+          8796
+        ],
+        "prefill_steps": 4
+      },
+      "tail128": {
+        "initial_cache_hit": 0,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          3840,
+          7680,
+          8448,
+          8704,
+          8796
+        ],
+        "prefill_steps": 5
+      }
+    },
+    "warm-stable-chat": {
+      "baseline": {
+        "initial_cache_hit": 8448,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          8796
+        ],
+        "prefill_steps": 1
+      },
+      "tail128": {
+        "initial_cache_hit": 8704,
+        "shared_boundary": 0,
+        "chunk_ends": [
+          8796
+        ],
+        "prefill_steps": 1
+      }
+    }
+  }
+}

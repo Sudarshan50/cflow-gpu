@@ -29,8 +29,13 @@ class ResponsesBridgeTest(unittest.IsolatedAsyncioTestCase):
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 requests.append((self.path, body))
-                usage = {"prompt_tokens": 100, "completion_tokens": 1, "total_tokens": 101,
-                         "prompt_tokens_details": {"cached_tokens": 64}}
+                usage = {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 2,
+                    "total_tokens": 102,
+                    "prompt_tokens_details": {"cached_tokens": 64},
+                    "completion_tokens_details": {"reasoning_tokens": 1},
+                }
                 base = {"id": "chatcmpl-offline", "created": 1, "model": "FW-Kimi-K3"}
                 if self.path != "/v1/chat/completions":
                     status, mime = 404, "application/json"
@@ -39,7 +44,9 @@ class ResponsesBridgeTest(unittest.IsolatedAsyncioTestCase):
                     status, mime = 200, "text/event-stream"
                     chunks = [
                         {**base, "object": "chat.completion.chunk", "choices": [
-                            {"index": 0, "delta": {"role": "assistant", "content": "OK"}, "finish_reason": None}]},
+                            {"index": 0, "delta": {"role": "assistant", "reasoning": "why"}, "finish_reason": None}]},
+                        {**base, "object": "chat.completion.chunk", "choices": [
+                            {"index": 0, "delta": {"content": "OK"}, "finish_reason": None}]},
                         {**base, "object": "chat.completion.chunk", "choices": [
                             {"index": 0, "delta": {}, "finish_reason": "stop"}]},
                     ]
@@ -49,7 +56,9 @@ class ResponsesBridgeTest(unittest.IsolatedAsyncioTestCase):
                 else:
                     status, mime = 200, "application/json"
                     raw = json.dumps({**base, "object": "chat.completion", "usage": usage, "choices": [
-                        {"index": 0, "message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}]}).encode()
+                        {"index": 0, "message": {
+                            "role": "assistant", "content": "OK", "reasoning": "why",
+                        }, "finish_reason": "stop"}]}).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", mime)
                 self.send_header("Content-Length", str(len(raw)))
@@ -85,6 +94,7 @@ class ResponsesBridgeTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(body["messages"], [{"role": "user", "content": "Reply OK"}])
             self.assertNotIn("use_chat_completions_api", body)
             self.assertEqual(result.usage.input_tokens_details.cached_tokens, 64)
+            self.assertEqual(result.usage.output_tokens_details.reasoning_tokens, 1)
 
     async def test_stream_has_terminal_response_and_cached_usage(self):
         result = await self.router.aresponses(
@@ -94,13 +104,20 @@ class ResponsesBridgeTest(unittest.IsolatedAsyncioTestCase):
         terminal = [event for event in events if event.type == "response.completed"]
         self.assertEqual(len(terminal), 1)
         self.assertEqual(terminal[0].response.usage.input_tokens_details.cached_tokens, 64)
+        self.assertEqual(
+            terminal[0].response.usage.output_tokens_details.reasoning_tokens, 1
+        )
         self.assertEqual(self.requests[-1][0], "/v1/chat/completions")
 
     async def test_chat_still_uses_chat_without_leaking_bridge_control(self):
         result = await self.router.acompletion(
             model="FW-Kimi-K3", messages=[{"role": "user", "content": "Reply OK"}], max_tokens=16,
         )
+        await self.callback.async_post_call_success_hook({}, None, result)
         self.assertEqual(result.choices[0].message.content, "OK")
+        self.assertEqual(result.choices[0].message.reasoning_content, "why")
+        self.assertEqual(result.choices[0].message.reasoning, "why")
+        self.assertEqual(result.usage.completion_tokens_details.reasoning_tokens, 1)
         self.assertEqual(self.requests[-1][0], "/v1/chat/completions")
         self.assertNotIn("use_chat_completions_api", self.requests[-1][1])
 

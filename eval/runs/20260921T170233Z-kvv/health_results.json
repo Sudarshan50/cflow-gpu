@@ -1,0 +1,693 @@
+{
+  "meta": {
+    "started_utc": "2026-09-21T17:02:33Z",
+    "elapsed_s": 16.8,
+    "base_url": "https://api.cflowx.in/v1",
+    "model": "FW-Kimi-K3",
+    "sections": [
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "H",
+      "I",
+      "J",
+      "K",
+      "L",
+      "M",
+      "N",
+      "S"
+    ],
+    "eval_customer": "evalbot",
+    "customer_keys_tested": [
+      "evalbot"
+    ],
+    "harness": "kvv_health.py"
+  },
+  "counts": {
+    "PASS": 26,
+    "WARN": 35,
+    "FAIL": 30,
+    "SKIP": 3
+  },
+  "checks": [
+    {
+      "id": "A1",
+      "name": "GET /v1/models returns target model",
+      "status": "PASS",
+      "detail": "http 200 names=['FW-Kimi-K3', 'kimi-k3', 'moonshotai/Kimi-K3']",
+      "http_code": 200
+    },
+    {
+      "id": "A2",
+      "name": "Non-streaming chat structure",
+      "status": "PASS",
+      "detail": "http 200 finish=stop content='Hello!' 1.6s",
+      "http_code": 200
+    },
+    {
+      "id": "A3",
+      "name": "Streaming chat frames + [DONE]",
+      "status": "PASS",
+      "detail": "http 200 frames=297 done=True ",
+      "http_code": 200,
+      "frames": 297
+    },
+    {
+      "id": "A4",
+      "name": "Response model field echo",
+      "status": "PASS",
+      "detail": "echoed='FW-Kimi-K3' expected='FW-Kimi-K3'",
+      "http_code": 200
+    },
+    {
+      "id": "A5",
+      "name": "Unknown fields in message object are ignored",
+      "status": "PASS",
+      "detail": "http 200 accepted",
+      "http_code": 200
+    },
+    {
+      "id": "A6",
+      "name": "Unknown model name returns 4xx",
+      "status": "PASS",
+      "detail": "http 403 (reference platform returned 503 and was flagged)",
+      "http_code": 403
+    },
+    {
+      "id": "A7",
+      "name": "/v1/embeddings behaviour documented",
+      "status": "PASS",
+      "detail": "http 404 - no embedding model is served here",
+      "http_code": 404
+    },
+    {
+      "id": "A8",
+      "name": "Video input rejected with a clear error",
+      "status": "PASS",
+      "detail": "http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo",
+      "http_code": 429
+    },
+    {
+      "id": "B1",
+      "name": "temperature=0 accepted",
+      "status": "FAIL",
+      "detail": "http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo",
+      "http_code": 429
+    },
+    {
+      "id": "B2",
+      "name": "temperature=2 accepted",
+      "status": "FAIL",
+      "detail": "http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo",
+      "http_code": 429
+    },
+    {
+      "id": "B3",
+      "name": "temperature=3 rejected",
+      "status": "PASS",
+      "detail": "http 429 want=4xx ",
+      "http_code": 429
+    },
+    {
+      "id": "B4",
+      "name": "temperature=-1 rejected",
+      "status": "PASS",
+      "detail": "http 429 want=4xx ",
+      "http_code": 429
+    },
+    {
+      "id": "B5",
+      "name": "top_p=0.1 accepted",
+      "status": "FAIL",
+      "detail": "http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo",
+      "http_code": 429
+    },
+    {
+      "id": "B6",
+      "name": "top_p=1.5 rejected",
+      "status": "PASS",
+      "detail": "http 429 want=4xx ",
+      "http_code": 429
+    },
+    {
+      "id": "B7",
+      "name": "frequency_penalty=2 accepted",
+      "status": "FAIL",
+      "detail": "http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo",
+      "http_code": 429
+    },
+    {
+      "id": "B8",
+      "name": "frequency_penalty=5 rejected",
+      "status": "PASS",
+      "detail": "http 429 want=4xx ",
+      "http_code": 429
+    },
+    {
+      "id": "B9",
+      "name": "presence_penalty=-2 accepted",
+      "status": "FAIL",
+      "detail": "http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo",
+      "http_code": 429
+    },
+    {
+      "id": "B10",
+      "name": "negative max_tokens rejected",
+      "status": "PASS",
+      "detail": "http 429 want=4xx ",
+      "http_code": 429
+    },
+    {
+      "id": "B11",
+      "name": "unknown parameter ignored",
+      "status": "FAIL",
+      "detail": "http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo",
+      "http_code": 429
+    },
+    {
+      "id": "B12",
+      "name": "max_tokens=16 truncates",
+      "status": "WARN",
+      "detail": "http 429 completion_tokens=None finish=None",
+      "http_code": 429
+    },
+    {
+      "id": "B13",
+      "name": "empty messages rejected",
+      "status": "PASS",
+      "detail": "http 429",
+      "http_code": 429
+    },
+    {
+      "id": "B14",
+      "name": "stop sequence honoured",
+      "status": "WARN",
+      "detail": "http 429 content=''",
+      "http_code": 429
+    },
+    {
+      "id": "B15",
+      "name": "seed reproducibility",
+      "status": "PASS",
+      "detail": "same=True a='' b=''"
+    },
+    {
+      "id": "B16",
+      "name": "n=2 multiple candidates",
+      "status": "WARN",
+      "detail": "http 429 choices=0 (reference platform: 65/65 rejected n>1)",
+      "http_code": 429
+    },
+    {
+      "id": "B17",
+      "name": "oversized max_tokens handled cleanly",
+      "status": "PASS",
+      "detail": "http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo",
+      "http_code": 429
+    },
+    {
+      "id": "B18",
+      "name": "logprobs returned when requested",
+      "status": "WARN",
+      "detail": "http 429 logprobs=empty (reference platform: only 14/65 channels)",
+      "http_code": 429
+    },
+    {
+      "id": "C1",
+      "name": "tool_choice=auto produces a call",
+      "status": "FAIL",
+      "detail": "http 429 calls=0",
+      "http_code": 429
+    },
+    {
+      "id": "C2",
+      "name": "tool_choice=none suppresses calls",
+      "status": "FAIL",
+      "detail": "http 429 calls=0",
+      "http_code": 429
+    },
+    {
+      "id": "C3",
+      "name": "tool_choice=specific function forces that tool",
+      "status": "FAIL",
+      "detail": "http 429 calls=[]",
+      "http_code": 429
+    },
+    {
+      "id": "C4",
+      "name": "tool_choice=required 5/5",
+      "status": "FAIL",
+      "detail": "0/5 produced a tool call",
+      "hits": 0
+    },
+    {
+      "id": "C5",
+      "name": "nested schema arguments conform",
+      "status": "FAIL",
+      "detail": "http 429 args=none",
+      "http_code": 429
+    },
+    {
+      "id": "C6",
+      "name": "correct routing among 20 tools",
+      "status": "FAIL",
+      "detail": "http 429 picked=[]",
+      "http_code": 429
+    },
+    {
+      "id": "C7",
+      "name": "parallel_tool_calls returns multiple calls",
+      "status": "WARN",
+      "detail": "http 429 calls=0",
+      "http_code": 429,
+      "calls": 0
+    },
+    {
+      "id": "C8",
+      "name": "multi-turn tool result consumed",
+      "status": "FAIL",
+      "detail": "no first-turn call"
+    },
+    {
+      "id": "C9",
+      "name": "streamed tool_calls reassemble",
+      "status": "WARN",
+      "detail": "http 429 name=None args=''",
+      "http_code": 429
+    },
+    {
+      "id": "C10",
+      "name": "tool_call object shape is OpenAI-conformant",
+      "status": "FAIL",
+      "detail": "http 429 shape_ok=False",
+      "http_code": 429
+    },
+    {
+      "id": "D1",
+      "name": "response_format=json_object returns valid JSON",
+      "status": "FAIL",
+      "detail": "http 429 body=''",
+      "http_code": 429
+    },
+    {
+      "id": "D2",
+      "name": "json_schema strict conforms exactly",
+      "status": "FAIL",
+      "detail": "http 429 body=''",
+      "http_code": 429
+    },
+    {
+      "id": "D3",
+      "name": "$ref / $defs schema accepted",
+      "status": "WARN",
+      "detail": "http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, cooldown_list=['b80f1ab",
+      "http_code": 429
+    },
+    {
+      "id": "E0",
+      "name": "default request reports reasoning_tokens",
+      "status": "FAIL",
+      "detail": "http 429 reasoning_tokens=None reasoning_len=0",
+      "http_code": 429,
+      "reasoning_tokens": null
+    },
+    {
+      "id": "E1",
+      "name": "reasoning_effort=none",
+      "status": "WARN",
+      "detail": "http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary)",
+      "http_code": 429
+    },
+    {
+      "id": "E2",
+      "name": "reasoning_effort=low",
+      "status": "WARN",
+      "detail": "http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary)",
+      "http_code": 429
+    },
+    {
+      "id": "E3",
+      "name": "reasoning_effort=medium",
+      "status": "WARN",
+      "detail": "http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary)",
+      "http_code": 429
+    },
+    {
+      "id": "E4",
+      "name": "reasoning_effort=high",
+      "status": "WARN",
+      "detail": "http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary)",
+      "http_code": 429
+    },
+    {
+      "id": "E5",
+      "name": "reasoning_effort=xhigh",
+      "status": "WARN",
+      "detail": "http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary)",
+      "http_code": 429
+    },
+    {
+      "id": "E6",
+      "name": "reasoning_effort=max",
+      "status": "WARN",
+      "detail": "http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary)",
+      "http_code": 429
+    },
+    {
+      "id": "E7",
+      "name": "reasoning_effort=minimal",
+      "status": "WARN",
+      "detail": "http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary)",
+      "http_code": 429
+    },
+    {
+      "id": "E8",
+      "name": "reasoning_effort=adaptive",
+      "status": "WARN",
+      "detail": "http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary)",
+      "http_code": 429
+    },
+    {
+      "id": "E9",
+      "name": "reasoning_tokens grow with effort level",
+      "status": "SKIP",
+      "detail": "observed=[] monotonic=None"
+    },
+    {
+      "id": "E10",
+      "name": "disable thinking via enable_thinking=false",
+      "status": "WARN",
+      "detail": "http 429 reasoning_tokens=None reasoning_len=0",
+      "http_code": 429
+    },
+    {
+      "id": "E11",
+      "name": "disable thinking via thinking.type=disabled",
+      "status": "WARN",
+      "detail": "http 429 reasoning_tokens=None reasoning_len=0",
+      "http_code": 429
+    },
+    {
+      "id": "E12",
+      "name": "disable thinking via chat_template_kwargs.thinking=false",
+      "status": "WARN",
+      "detail": "http 429 reasoning_tokens=None reasoning_len=0",
+      "http_code": 429
+    },
+    {
+      "id": "E13",
+      "name": "disable thinking via reasoning_effort=none",
+      "status": "WARN",
+      "detail": "http 429 reasoning_tokens=None reasoning_len=0",
+      "http_code": 429
+    },
+    {
+      "id": "E14",
+      "name": "thinking.budget_tokens=128 behaviour",
+      "status": "PASS",
+      "detail": "http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo",
+      "http_code": 429
+    },
+    {
+      "id": "F1",
+      "name": "stream_options.include_usage delivers usage",
+      "status": "FAIL",
+      "detail": "http 429 usage={}",
+      "http_code": 429
+    },
+    {
+      "id": "F2",
+      "name": "SSE frame structure is standard",
+      "status": "FAIL",
+      "detail": "frames=0 done=False objects_ok=False"
+    },
+    {
+      "id": "F3",
+      "name": "streaming and non-streaming agree",
+      "status": "WARN",
+      "detail": "streamed=0 chars nonstream=0 chars match_head=False"
+    },
+    {
+      "id": "F4",
+      "name": "long stream does not drop frames",
+      "status": "WARN",
+      "detail": "http 503 frames=0 chars=0 done=False",
+      "http_code": 503,
+      "frames": 0,
+      "chars": 0
+    },
+    {
+      "id": "G-ERR",
+      "name": "section Usage reporting crashed",
+      "status": "FAIL",
+      "detail": "AttributeError: 'str' object has no attribute 'get'"
+    },
+    {
+      "id": "H1",
+      "name": "base64 single image recognised",
+      "status": "FAIL",
+      "detail": "http 503 answer=''",
+      "http_code": 503
+    },
+    {
+      "id": "H2",
+      "name": "multiple images counted",
+      "status": "FAIL",
+      "detail": "http 503 answer=''",
+      "http_code": 503
+    },
+    {
+      "id": "H3",
+      "name": "remote URL image fetched",
+      "status": "WARN",
+      "detail": "http 503 answer=''",
+      "http_code": 503
+    },
+    {
+      "id": "H4",
+      "name": "image_url.detail accepted",
+      "status": "WARN",
+      "detail": "http 503 <html>\r\n<head><title>503 Service Temporarily Unavailable</title></head>\r\n<body>\r\n<center><h1>503 Service Temporarily Una",
+      "http_code": 503
+    },
+    {
+      "id": "H5",
+      "name": "stray image_url.MimeType key tolerated",
+      "status": "WARN",
+      "detail": "http 503 <html>\r\n<head><title>503 Service Temporarily Unavailable</title></head>\r\n<body>\r\n<center><h1>503 Service Tempo (reference platform P0-1: 1,548 failures/24h)",
+      "http_code": 503
+    },
+    {
+      "id": "I-ERR",
+      "name": "section Long context crashed",
+      "status": "FAIL",
+      "detail": "AttributeError: 'str' object has no attribute 'get'"
+    },
+    {
+      "id": "J1",
+      "name": "invalid key returns 401",
+      "status": "PASS",
+      "detail": "http 401",
+      "http_code": 401
+    },
+    {
+      "id": "J2",
+      "name": "Anthropic /v1/messages surface",
+      "status": "WARN",
+      "detail": "http 503 - not served here; edge allowlists /v1/ only",
+      "http_code": 503
+    },
+    {
+      "id": "J3",
+      "name": "/v1/responses surface",
+      "status": "WARN",
+      "detail": "http 503 <html>\r\n<head><title>503 Service Temporarily Unavailable</title></head>\r\n<body>\r\n<center><h1>503 Service Tempo",
+      "http_code": 503
+    },
+    {
+      "id": "J4",
+      "name": "anyOf tool schema consistent across endpoints",
+      "status": "SKIP",
+      "detail": "/v1/responses not served"
+    },
+    {
+      "id": "J5",
+      "name": "developer role accepted",
+      "status": "WARN",
+      "detail": "http 503 <html>\r\n<head><title>503 Service Temporarily Unavailable</title></head>\r\n<body>\r\n<center><h1>503 Service Tempo",
+      "http_code": 503
+    },
+    {
+      "id": "K1",
+      "name": "6x concurrent x 12 requests",
+      "status": "FAIL",
+      "detail": "ok=0/12 wall=0.0s p50=Nones p95=Nones",
+      "ok": 0,
+      "total": 12,
+      "wall_s": 0.02,
+      "p50_s": null,
+      "p95_s": null
+    },
+    {
+      "id": "K2",
+      "name": "no throttling or server errors under test load",
+      "status": "WARN",
+      "detail": "status spread={503: 12}"
+    },
+    {
+      "id": "L1",
+      "name": "prompt_tokens identical across 6 repeats",
+      "status": "WARN",
+      "detail": "values=[]",
+      "values": []
+    },
+    {
+      "id": "L-ERR",
+      "name": "section Consistency crashed",
+      "status": "FAIL",
+      "detail": "AttributeError: 'str' object has no attribute 'get'"
+    },
+    {
+      "id": "M1",
+      "name": "content-array text shape accepted",
+      "status": "FAIL",
+      "detail": "http 503",
+      "http_code": 503
+    },
+    {
+      "id": "M2",
+      "name": "system role accepted",
+      "status": "FAIL",
+      "detail": "http 503 content=''",
+      "http_code": 503
+    },
+    {
+      "id": "M3",
+      "name": "orphan tool message without assistant turn",
+      "status": "WARN",
+      "detail": "http 503 <html>\r\n<head><title>503 Service Temporarily Unavailable</title></head>\r\n<body>\r\n<center><h1>503 Service Tempo",
+      "http_code": 503
+    },
+    {
+      "id": "M4",
+      "name": "message .name field accepted",
+      "status": "WARN",
+      "detail": "http 503",
+      "http_code": 503
+    },
+    {
+      "id": "M5",
+      "name": "assistant history with vendor reasoning field round-trips",
+      "status": "FAIL",
+      "detail": "http 503 <html>\r\n<head><title>503 Service Temporarily Unavailable</title></head>\r\n<body>\r\n<center><h1>503 Service Tempo (reference platform P1-1: 243 failures/24h)",
+      "http_code": 503
+    },
+    {
+      "id": "M6",
+      "name": "assistant history with reasoning_content round-trips",
+      "status": "WARN",
+      "detail": "http 503 <html>\r\n<head><title>503 Service Temporarily Unavailable</title></head>\r\n<body>\r\n<center><h1>503 Service Tempo",
+      "http_code": 503
+    },
+    {
+      "id": "M7",
+      "name": "unknown vendor extension web_search_options",
+      "status": "WARN",
+      "detail": "http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=",
+      "http_code": 429
+    },
+    {
+      "id": "M8",
+      "name": "invalid role rejected",
+      "status": "WARN",
+      "detail": "http 503",
+      "http_code": 503
+    },
+    {
+      "id": "N-ERR",
+      "name": "section Reasoning budget crashed",
+      "status": "FAIL",
+      "detail": "AttributeError: 'str' object has no attribute 'get'"
+    },
+    {
+      "id": "S1",
+      "name": "POST /invocations blocked without credentials",
+      "status": "PASS",
+      "detail": "http 404 (want 403/404)",
+      "http_code": 404
+    },
+    {
+      "id": "S2",
+      "name": "POST /scale_elastic_ep blocked without credentials",
+      "status": "PASS",
+      "detail": "http 404 (want 403/404)",
+      "http_code": 404
+    },
+    {
+      "id": "S3",
+      "name": "POST /tokenize blocked without credentials",
+      "status": "PASS",
+      "detail": "http 404 (want 403/404)",
+      "http_code": 404
+    },
+    {
+      "id": "S4",
+      "name": "POST /detokenize blocked without credentials",
+      "status": "PASS",
+      "detail": "http 404 (want 403/404)",
+      "http_code": 404
+    },
+    {
+      "id": "S5",
+      "name": "GET /version blocked without credentials",
+      "status": "PASS",
+      "detail": "http 404 (want 403/404)",
+      "http_code": 404
+    },
+    {
+      "id": "S6",
+      "name": "GET /openapi.json blocked without credentials",
+      "status": "FAIL",
+      "detail": "http 200 (want 403/404)",
+      "http_code": 200
+    },
+    {
+      "id": "S7",
+      "name": "GET /docs blocked without credentials",
+      "status": "PASS",
+      "detail": "http 404 (want 403/404)",
+      "http_code": 404
+    },
+    {
+      "id": "S8",
+      "name": "GET /metrics blocked without credentials",
+      "status": "PASS",
+      "detail": "http 403 (want 403/404)",
+      "http_code": 403
+    },
+    {
+      "id": "S9",
+      "name": "GET /health blocked without credentials",
+      "status": "PASS",
+      "detail": "http 403 (want 403/404)",
+      "http_code": 403
+    },
+    {
+      "id": "S10",
+      "name": "upstream key rejected at the public edge",
+      "status": "SKIP",
+      "detail": "api-key.txt not readable"
+    },
+    {
+      "id": "S11",
+      "name": "plaintext HTTP redirects to TLS",
+      "status": "WARN",
+      "detail": "http 0 (urllib follows the 301)",
+      "http_code": 0
+    }
+  ]
+}

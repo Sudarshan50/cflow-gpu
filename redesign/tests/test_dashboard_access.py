@@ -32,6 +32,7 @@ class AccessParseTest(unittest.TestCase):
         )
         self.assertEqual(row["status"], 200)
         self.assertEqual(row["req_s"], 315.106)
+        self.assertIsNone(row["in"])
         self.assertTrue(dash.is_inference_path(row["path"]))
         self.assertEqual(dash.access_identity(row), "45.78.68.8")
 

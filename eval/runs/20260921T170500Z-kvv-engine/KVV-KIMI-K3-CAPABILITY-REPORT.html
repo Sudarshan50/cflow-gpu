@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Kimi K3 — KVV Capability Report (21 Sep 2026)</title>
+<style>
+:root {
+  --bg:#f6f4ef; --card:#fff; --ink:#1b1a17; --muted:#5c5850;
+  --line:#ddd6c8; --pass:#1b7f4a; --warn:#9a6b00; --fail:#b42318; --skip:#5c5850;
+  --passbg:#e6f6ec; --warnbg:#fff4d6; --failbg:#fde8e6; --skipbg:#eeeae2;
+}
+* { box-sizing:border-box; }
+body { margin:0; font:16px/1.55 ui-sans-serif,system-ui,Segoe UI,Helvetica,Arial; color:var(--ink); background:var(--bg); }
+.wrap { max-width:1080px; margin:0 auto; padding:32px 20px 80px; }
+header { background:#1b1a17; color:#f6f4ef; padding:36px 20px 32px; }
+header .wrap { padding-top:0; padding-bottom:0; }
+header p { color:#d6d0c4; max-width:70ch; }
+h1 { margin:0 0 8px; font-size:32px; letter-spacing:-0.02em; }
+h2 { margin:40px 0 12px; font-size:24px; }
+h3 { margin:28px 0 10px; font-size:19px; }
+h4 { margin:20px 0 8px; }
+.kicker { text-transform:uppercase; letter-spacing:.12em; font-size:12px; color:#c4b89a; }
+.cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:20px 0; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+.card b { display:block; font-size:28px; letter-spacing:-0.03em; }
+.card span { color:var(--muted); font-size:13px; }
+.badge { display:inline-block; font-size:11px; font-weight:700; letter-spacing:.04em; padding:2px 7px; border-radius:999px; }
+.badge.pass { background:var(--passbg); color:var(--pass); }
+.badge.warn { background:var(--warnbg); color:var(--warn); }
+.badge.fail { background:var(--failbg); color:var(--fail); }
+.badge.skip { background:var(--skipbg); color:var(--skip); }
+table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); font-size:14px; margin:10px 0 24px; }
+th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+th { background:#f1eee6; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+td.ev, .checks td:last-child { color:var(--muted); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; word-break:break-word; }
+.mini { font-size:13px; font-weight:500; color:var(--muted); margin-left:8px; }
+.callout { background:#fff8e6; border:1px solid #ead9a0; border-radius:10px; padding:12px 14px; }
+pre { background:#1b1a17; color:#f6f4ef; padding:14px 16px; border-radius:10px; overflow:auto; font-size:13px; }
+code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.92em; }
+.two { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+@media (max-width:800px) { .two { grid-template-columns:1fr; } }
+footer { color:var(--muted); font-size:13px; margin-top:48px; }
+a { color:#1b4f8a; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="kicker">KVV capability report · 21 September 2026</div>
+    <h1>Kimi K3 as served today</h1>
+    <p>A complete, evidence-backed account of what the current Kimi K3 deployment can do. Model-capability checks were run live against the vLLM engine. Vendor quality scores are labelled as such and were not re-run on this box.</p>
+  </div>
+</header>
+<div class="wrap">
+  <div class="cards">
+    <div class="card"><b>82</b><span>KVV PASS (engine)</span></div>
+    <div class="card"><b>10</b><span>KVV WARN (boundaries)</span></div>
+    <div class="card"><b>2</b><span>KVV FAIL</span></div>
+    <div class="card"><b>282s</b><span>Engine suite wall time</span></div>
+    <div class="card"><b>262k</b><span>Served context tokens</span></div>
+    <div class="card"><b>2.8T</b><span>Parameters (104B active)</span></div>
+  </div>
+
+  <h2>What you can ship on</h2>
+  <div class="two">
+    <div class="card">
+      <strong>Works now</strong>
+      <p>OpenAI chat + stream, tool calling (auto/none/required/parallel/multi-turn), strict JSON schema, base64 images, reasoning (`low`/`high`/`max`/`none`), 90k-token prompts, needle retrieval, prefix-cache accounting, `n=2`, logprobs, three model aliases.</p>
+    </div>
+    <div class="card">
+      <strong>Does not work / different from the card</strong>
+      <p>Video; remote image URLs; 1M context (262k here); `seed` reproducibility; `developer` role; `usage.reasoning_tokens`; `enable_thinking=false`; embeddings; engine-local API keys.</p>
+    </div>
+  </div>
+  <p class="callout"><strong>Client rule.</strong> Echo the previous assistant message intact (`content` + `reasoning` + `tool_calls`). For short answers, raise <code>max_tokens</code> or set <code>reasoning_effort=none</code>. Images must be <code>data:image/...;base64,...</code>.</p>
+
+  <h2>Model identity</h2>
+  <table>
+    <tr><th>Item</th><th>Value</th></tr>
+    <tr><td>Checkpoint</td><td><code>moonshotai/Kimi-K3</code> @ <code>f831ab66814297da540d832a5235f8e904f29d06</code></td></tr>
+    <tr><td>Served names</td><td><code>FW-Kimi-K3</code>, <code>kimi-k3</code>, <code>moonshotai/Kimi-K3</code></td></tr>
+    <tr><td>Architecture</td><td>MoE 2.8T / 104B active · 93 layers · 69 KDA + 24 gated MLA · 896 experts, 16 routed + 2 shared · SiTU-GLU · MoonViT-V2 vision</td></tr>
+    <tr><td>Quant / dtype</td><td>MXFP4 weights (QAT) · BF16 compute · AITER_MXFP4_BF16 MoE</td></tr>
+    <tr><td>Native vs served context</td><td>1,048,576 native · <strong>262,144 served</strong></td></tr>
+    <tr><td>Hardware</td><td>8× AMD Instinct MI355X VF, TP=8, 2.0 TiB RAM, host <code>kimi-k3-t01</code></td></tr>
+    <tr><td>Engine</td><td>vLLM 0.1.dev19253+g5f76ae224 · KV 1,628,607 tokens (43.07 GiB) · max 6.21× at 262k · prefix cache on · batch 4096 · 64 seqs</td></tr>
+    <tr><td>Public path</td><td>nginx → LiteLLM :4000 → gateway :8002 → vLLM :8001 at <code>https://api.cflowx.in/v1</code></td></tr>
+  </table>
+
+  <h2>Scorecard</h2>
+  <table>
+    <thead><tr><th>Sec</th><th>Topic</th><th>PASS</th><th>WARN</th><th>FAIL</th><th>SKIP</th></tr></thead>
+    <tbody>
+    <tr><td><a href='#sec-a'>A</a></td><td>Basic protocol</td><td>8</td><td>0</td><td>0</td><td>0</td></tr><tr><td><a href='#sec-b'>B</a></td><td>Parameter validation</td><td>16</td><td>1</td><td>1</td><td>0</td></tr><tr><td><a href='#sec-c'>C</a></td><td>Tool calling</td><td>10</td><td>0</td><td>0</td><td>0</td></tr><tr><td><a href='#sec-d'>D</a></td><td>Structured output</td><td>3</td><td>0</td><td>0</td><td>0</td></tr><tr><td><a href='#sec-e'>E</a></td><td>Reasoning control</td><td>8</td><td>6</td><td>0</td><td>1</td></tr><tr><td><a href='#sec-f'>F</a></td><td>Streaming quality</td><td>4</td><td>0</td><td>0</td><td>0</td></tr><tr><td><a href='#sec-g'>G</a></td><td>Usage and prefix cache</td><td>5</td><td>0</td><td>0</td><td>0</td></tr><tr><td><a href='#sec-h'>H</a></td><td>Multimodal</td><td>4</td><td>1</td><td>0</td><td>0</td></tr><tr><td><a href='#sec-i'>I</a></td><td>Long context</td><td>4</td><td>0</td><td>0</td><td>0</td></tr><tr><td><a href='#sec-j'>J</a></td><td>Protocol surfaces</td><td>2</td><td>2</td><td>1</td><td>0</td></tr><tr><td><a href='#sec-k'>K</a></td><td>Concurrency</td><td>2</td><td>0</td><td>0</td><td>0</td></tr><tr><td><a href='#sec-l'>L</a></td><td>Consistency</td><td>4</td><td>0</td><td>0</td><td>0</td></tr><tr><td><a href='#sec-m'>M</a></td><td>Message shapes and roles</td><td>8</td><td>0</td><td>0</td><td>0</td></tr><tr><td><a href='#sec-n'>N</a></td><td>Reasoning budget vs visible output</td><td>4</td><td>0</td><td>0</td><td>0</td></tr><tr><td><a href='#sec-s'>S</a></td><td>Public-edge security</td><td>10</td><td>1</td><td>0</td><td>0</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Detailed KVV results</h2>
+  
+    <section id="sec-a">
+      <h3>A. Basic protocol
+        <span class="mini">8 pass · 0 warn · 0 fail</span></h3>
+      <p>The OpenAI `/v1/chat/completions` surface is complete: non-streaming and<br>streaming both return a standard object, the served name `FW-Kimi-K3` is<br>echoed, unknown message fields are ignored, and an unknown model name is a<br>clean 404. There is no embedding model. Video is rejected with a precise<br>error (`At most 0 video(s) may be provided`) — the checkpoint includes a<br>MoonViT-V2 encoder that can do video, but this vLLM serve is image+text<br>only.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>A1</code></td><td>GET /v1/models returns target model</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 names=[&#x27;FW-Kimi-K3&#x27;, &#x27;kimi-k3&#x27;, &#x27;moonshotai/Kimi-K3&#x27;]</td></tr>
+<tr><td><code>A2</code></td><td>Non-streaming chat structure</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 finish=stop content=&#x27;Hello&#x27; 2.4s</td></tr>
+<tr><td><code>A3</code></td><td>Streaming chat frames + [DONE]</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 frames=301 done=True </td></tr>
+<tr><td><code>A4</code></td><td>Response model field echo</td><td><span class="badge pass">PASS</span></td><td class="ev">echoed=&#x27;FW-Kimi-K3&#x27; expected=&#x27;FW-Kimi-K3&#x27;</td></tr>
+<tr><td><code>A5</code></td><td>Unknown fields in message object are ignored</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 accepted</td></tr>
+<tr><td><code>A6</code></td><td>Unknown model name returns 4xx</td><td><span class="badge pass">PASS</span></td><td class="ev">http 404 (reference platform returned 503 and was flagged)</td></tr>
+<tr><td><code>A7</code></td><td>/v1/embeddings behaviour documented</td><td><span class="badge pass">PASS</span></td><td class="ev">http 404 - no embedding model is served here</td></tr>
+<tr><td><code>A8</code></td><td>Video input rejected with a clear error</td><td><span class="badge pass">PASS</span></td><td class="ev">http 400 At most 0 video(s) may be provided in one prompt. (parameter=video)</td></tr>
+</tbody></table>
+    </section>
+    <section id="sec-b">
+      <h3>B. Parameter validation
+        <span class="mini">16 pass · 1 warn · 1 fail</span></h3>
+      <p>Sampling parameters follow the OpenAI ranges (`temperature` 0–2, `top_p`<br>0–1, penalties ±2). `max_tokens` truncates (`finish_reason=length`).<br>`n=2` returns two candidates. `logprobs` are returned when requested.<br>Oversized `max_tokens` is rejected against the 262,144 context cap.<br><br>Two real boundaries: an empty `messages` array is accepted (HTTP 200) rather<br>than rejected, and `seed` does not make two samples identical. Do not<br>promise deterministic sampling.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>B1</code></td><td>temperature=0 accepted</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 want=2xx </td></tr>
+<tr><td><code>B2</code></td><td>temperature=2 accepted</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 want=2xx </td></tr>
+<tr><td><code>B3</code></td><td>temperature=3 rejected</td><td><span class="badge pass">PASS</span></td><td class="ev">http 400 want=4xx </td></tr>
+<tr><td><code>B4</code></td><td>temperature=-1 rejected</td><td><span class="badge pass">PASS</span></td><td class="ev">http 400 want=4xx </td></tr>
+<tr><td><code>B5</code></td><td>top_p=0.1 accepted</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 want=2xx </td></tr>
+<tr><td><code>B6</code></td><td>top_p=1.5 rejected</td><td><span class="badge pass">PASS</span></td><td class="ev">http 400 want=4xx </td></tr>
+<tr><td><code>B7</code></td><td>frequency_penalty=2 accepted</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 want=2xx </td></tr>
+<tr><td><code>B8</code></td><td>frequency_penalty=5 rejected</td><td><span class="badge pass">PASS</span></td><td class="ev">http 400 want=4xx </td></tr>
+<tr><td><code>B9</code></td><td>presence_penalty=-2 accepted</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 want=2xx </td></tr>
+<tr><td><code>B10</code></td><td>negative max_tokens rejected</td><td><span class="badge pass">PASS</span></td><td class="ev">http 400 want=4xx </td></tr>
+<tr><td><code>B11</code></td><td>unknown parameter ignored</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 want=2xx </td></tr>
+<tr><td><code>B12</code></td><td>max_tokens=16 truncates</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 completion_tokens=16 finish=length</td></tr>
+<tr><td><code>B13</code></td><td>empty messages rejected</td><td><span class="badge fail">FAIL</span></td><td class="ev">http 200</td></tr>
+<tr><td><code>B14</code></td><td>stop sequence honoured</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 content=&#x27;The user has just provided a list: &quot;alpha &#x27;</td></tr>
+<tr><td><code>B15</code></td><td>seed reproducibility</td><td><span class="badge warn">WARN</span></td><td class="ev">same=False a=&#x27;Lantern&#x27; b=&#x27;Lighthouse&#x27;</td></tr>
+<tr><td><code>B16</code></td><td>n=2 multiple candidates</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 choices=2 (reference platform: 65/65 rejected n&gt;1)</td></tr>
+<tr><td><code>B17</code></td><td>oversized max_tokens handled cleanly</td><td><span class="badge pass">PASS</span></td><td class="ev">http 400 max_tokens=99999999 cannot be greater than max_model_len=max_total_tokens=262144. Please request fewer output tokens. (p</td></tr>
+<tr><td><code>B18</code></td><td>logprobs returned when requested</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 logprobs=present (reference platform: only 14/65 channels)</td></tr>
+</tbody></table>
+    </section>
+    <section id="sec-c">
+      <h3>C. Tool calling
+        <span class="mini">10 pass · 0 warn · 0 fail</span></h3>
+      <p>Tool calling is a first-class, production-ready surface on this serve.<br><br>- `tool_choice=auto / none / required / specific function` all behave.<br>- `required` produced a call on 5/5 repeats.<br>- Nested objects and arrays in the schema were filled correctly<br>  (`Ada`, age 36, Delhi→Tokyo business, Tokyo→Sydney economy).<br>- The model routed to the right tool among 20 declared tools.<br>- `parallel_tool_calls` returned two calls for two cities.<br>- A follow-up turn that fed the tool result back produced the right<br>  answer (`19°C`, clear skies).<br>- Streamed `tool_calls` reassemble to valid JSON<br>  (`{&quot;city&quot;:&quot;Berlin&quot;,&quot;unit&quot;:&quot;c&quot;}`).<br>- The object shape is OpenAI-conformant (`id`, `type=function`,<br>  `arguments` as a string).<br><br>Moonshot requires the full assistant message — including `reasoning` /<br>`reasoning_content` and `tool_calls` — to be echoed back on the next<br>turn. This deployment accepts both field names.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>C1</code></td><td>tool_choice=auto produces a call</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 calls=1</td></tr>
+<tr><td><code>C2</code></td><td>tool_choice=none suppresses calls</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 calls=0</td></tr>
+<tr><td><code>C3</code></td><td>tool_choice=specific function forces that tool</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 calls=[&#x27;get_weather&#x27;]</td></tr>
+<tr><td><code>C4</code></td><td>tool_choice=required 5/5</td><td><span class="badge pass">PASS</span></td><td class="ev">5/5 produced a tool call</td></tr>
+<tr><td><code>C5</code></td><td>nested schema arguments conform</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 args={&quot;traveller&quot;: {&quot;name&quot;: &quot;Ada&quot;, &quot;age&quot;: 36}, &quot;legs&quot;: [{&quot;from&quot;: &quot;Delhi&quot;, &quot;to&quot;: &quot;Tokyo&quot;, &quot;cabin&quot;: &quot;business&quot;}, {&quot;from&quot;: &quot;Tokyo&quot;, &quot;to&quot;: &quot;Sydney&quot;, &quot;cabin&quot;: &quot;economy&quot;}]}</td></tr>
+<tr><td><code>C6</code></td><td>correct routing among 20 tools</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 picked=[&#x27;get_weather&#x27;]</td></tr>
+<tr><td><code>C7</code></td><td>parallel_tool_calls returns multiple calls</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 calls=2</td></tr>
+<tr><td><code>C8</code></td><td>multi-turn tool result consumed</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 content=&#x27;The current weather in Lisbon is **19°C** with **clear skies** — a lovely day! ☀️&#x27;</td></tr>
+<tr><td><code>C9</code></td><td>streamed tool_calls reassemble</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 name=get_weather args=&#x27;{&quot;city&quot;: &quot;Berlin&quot;, &quot;unit&quot;: &quot;c&quot;}&#x27;</td></tr>
+<tr><td><code>C10</code></td><td>tool_call object shape is OpenAI-conformant</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 shape_ok=True</td></tr>
+</tbody></table>
+    </section>
+    <section id="sec-d">
+      <h3>D. Structured output
+        <span class="mini">3 pass · 0 warn · 0 fail</span></h3>
+      <p>`response_format=json_object` returned valid JSON. Strict<br>`json_schema` returned exactly the required keys with the right types.<br>`$ref` / `$defs` schemas are accepted. Structured output can be used<br>for extraction and agent payloads.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>D1</code></td><td>response_format=json_object returns valid JSON</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 body=&#x27;{&quot;city&quot;: &quot;Paris&quot;, &quot;country&quot;: &quot;France&quot;}&#x27;</td></tr>
+<tr><td><code>D2</code></td><td>json_schema strict conforms exactly</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 body=&#x27;{&quot;city&quot;:&quot;Paris&quot;,&quot;population&quot;:2100000,&quot;landmarks&quot;:[&quot;Eiffel Tower&quot;,&quot;Louvre Museum&quot;,&quot;Notre-Dame Cathedral&quot;,&quot;Arc de Triomphe&quot;,&quot;Sacré-Cœur Basilica&quot;,&quot;Champs-Élysées&quot;&#x27;</td></tr>
+<tr><td><code>D3</code></td><td>$ref / $defs schema accepted</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 ok</td></tr>
+</tbody></table>
+    </section>
+    <section id="sec-e">
+      <h3>E. Reasoning control
+        <span class="mini">8 pass · 6 warn · 0 fail</span></h3>
+      <p>Thinking is on by default. The tokenizer only accepts<br>`thinking_effort` / `reasoning_effort` values **`low`**, **`high`**,<br>**`max`**. `none` is honoured by the API as a disable switch.<br><br>Unsupported OpenAI-style values (`medium`, `xhigh`, `minimal`,<br>`adaptive`) fail with a clear error. That is a capability boundary,<br>not a crash.<br><br>`reasoning_effort=none` and `chat_template_kwargs.thinking=false` turn<br>thinking off. `enable_thinking=false` and `thinking.type=disabled` are<br>ignored and the model still thinks.<br><br>The usage object does **not** currently populate<br>`completion_tokens_details.reasoning_tokens`. Reasoning is visible in<br>`choices[0].message.reasoning` (and accepted back as either `reasoning`<br>or `reasoning_content`). Do not bill or gate on `reasoning_tokens` until<br>that field is filled.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>E0</code></td><td>default request reports reasoning_tokens</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 reasoning_tokens=None reasoning_len=165</td></tr>
+<tr><td><code>E1</code></td><td>reasoning_effort=none</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 reasoning_tokens=None</td></tr>
+<tr><td><code>E2</code></td><td>reasoning_effort=low</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 reasoning_tokens=None</td></tr>
+<tr><td><code>E3</code></td><td>reasoning_effort=medium</td><td><span class="badge warn">WARN</span></td><td class="ev">http 500 Unsupported thinking_effort=&#x27;medium&#x27;; supported values are [&#x27;high&#x27;, &#x27;low&#x27;, &#x27;max&#x27;]. (capability boundary)</td></tr>
+<tr><td><code>E4</code></td><td>reasoning_effort=high</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 reasoning_tokens=None</td></tr>
+<tr><td><code>E5</code></td><td>reasoning_effort=xhigh</td><td><span class="badge warn">WARN</span></td><td class="ev">http 500 Unsupported thinking_effort=&#x27;xhigh&#x27;; supported values are [&#x27;high&#x27;, &#x27;low&#x27;, &#x27;max&#x27;]. (capability boundary)</td></tr>
+<tr><td><code>E6</code></td><td>reasoning_effort=max</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 reasoning_tokens=None</td></tr>
+<tr><td><code>E7</code></td><td>reasoning_effort=minimal</td><td><span class="badge warn">WARN</span></td><td class="ev">http 500 Unsupported thinking_effort=&#x27;minimal&#x27;; supported values are [&#x27;high&#x27;, &#x27;low&#x27;, &#x27;max&#x27;]. (capability boundary)</td></tr>
+<tr><td><code>E8</code></td><td>reasoning_effort=adaptive</td><td><span class="badge warn">WARN</span></td><td class="ev">http 400 1 validation error:
+  {&#x27;type&#x27;: &#x27;literal_error&#x27;, &#x27;loc&#x27;: (&#x27;body&#x27;, &#x27;reasoning_effort&#x27;), &#x27;msg&#x27;: &quot;Input should be &#x27; (capability boundary)</td></tr>
+<tr><td><code>E9</code></td><td>reasoning_tokens grow with effort level</td><td><span class="badge skip">SKIP</span></td><td class="ev">observed=[] monotonic=None</td></tr>
+<tr><td><code>E10</code></td><td>disable thinking via enable_thinking=false</td><td><span class="badge warn">WARN</span></td><td class="ev">http 200 reasoning_tokens=None reasoning_len=119</td></tr>
+<tr><td><code>E11</code></td><td>disable thinking via thinking.type=disabled</td><td><span class="badge warn">WARN</span></td><td class="ev">http 200 reasoning_tokens=None reasoning_len=142</td></tr>
+<tr><td><code>E12</code></td><td>disable thinking via chat_template_kwargs.thinking=false</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 reasoning_tokens=None reasoning_len=0</td></tr>
+<tr><td><code>E13</code></td><td>disable thinking via reasoning_effort=none</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 reasoning_tokens=None reasoning_len=0</td></tr>
+<tr><td><code>E14</code></td><td>thinking.budget_tokens=128 behaviour</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 accepted</td></tr>
+</tbody></table>
+    </section>
+    <section id="sec-f">
+      <h3>F. Streaming quality
+        <span class="mini">4 pass · 0 warn · 0 fail</span></h3>
+      <p>SSE is standard (`object=chat.completion.chunk`, terminal `[DONE]`).<br>`stream_options.include_usage` delivers a final usage frame. A 3,104-frame<br>essay stream completed without dropped frames (8,074 visible characters).<br>Streaming and non-streaming answers agree on the same prompt.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>F1</code></td><td>stream_options.include_usage delivers usage</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 usage={&quot;prompt_tokens&quot;: 92, &quot;total_tokens&quot;: 165, &quot;completion_tokens&quot;: 73, &quot;prompt_tokens_details&quot;: {&quot;cached_tokens&quot;: 0, &quot;created_cache_tokens&quot;: 0}}</td></tr>
+<tr><td><code>F2</code></td><td>SSE frame structure is standard</td><td><span class="badge pass">PASS</span></td><td class="ev">frames=64 done=True objects_ok=True</td></tr>
+<tr><td><code>F3</code></td><td>streaming and non-streaming agree</td><td><span class="badge pass">PASS</span></td><td class="ev">streamed=426 chars nonstream=425 chars match_head=True</td></tr>
+<tr><td><code>F4</code></td><td>long stream does not drop frames</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 frames=3104 chars=8074 done=True</td></tr>
+</tbody></table>
+    </section>
+    <section id="sec-g">
+      <h3>G. Usage and prefix cache
+        <span class="mini">5 pass · 0 warn · 0 fail</span></h3>
+      <p>`prompt_tokens` scale linearly (10/20/40 copies of a unit sentence<br>→ 195/295/495 tokens, zero deviation). `prompt + completion = total`.<br>A repeated ~2.3k-token prefix reported `cached_tokens=2304` of<br>`prompt_tokens=2504` (92% of that prompt reused). Streaming and<br>non-streaming prompt token counts match. Truncation reports<br>`completion_tokens == max_tokens`.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>G1</code></td><td>prompt_tokens scale linearly with input</td><td><span class="badge pass">PASS</span></td><td class="ev">points=[(10, 195), (20, 295), (40, 495)] max_deviation=0.0</td></tr>
+<tr><td><code>G2</code></td><td>prompt+completion equals total</td><td><span class="badge pass">PASS</span></td><td class="ev">usage={&quot;prompt_tokens&quot;: 91, &quot;total_tokens&quot;: 229, &quot;completion_tokens&quot;: 138, &quot;prompt_tokens_details&quot;: {&quot;cached_tokens&quot;: 0, &quot;created_cache_tokens&quot;: 0, &quot;multimodal_tokens&quot;: null}}</td></tr>
+<tr><td><code>G3</code></td><td>cached_tokens reported for a repeated prefix</td><td><span class="badge pass">PASS</span></td><td class="ev">cached_tokens=2304 prompt_tokens=2504</td></tr>
+<tr><td><code>G4</code></td><td>streaming and non-streaming prompt_tokens identical</td><td><span class="badge pass">PASS</span></td><td class="ev">nonstream=96 stream=96</td></tr>
+<tr><td><code>G5</code></td><td>truncated completion_tokens equals max_tokens</td><td><span class="badge pass">PASS</span></td><td class="ev">completion_tokens=32 max_tokens=32</td></tr>
+</tbody></table>
+    </section>
+    <section id="sec-h">
+      <h3>H. Multimodal
+        <span class="mini">4 pass · 1 warn · 0 fail</span></h3>
+      <p>Native vision works for **inline/base64** images. A solid red PNG<br>was identified as “Red”. Two images were counted as “2”.<br>`image_url.detail` and a stray `MimeType` key are tolerated.<br><br>Remote HTTP(S) image URLs returned HTTP 422 — this engine does not<br>fetch URLs. Clients must send `data:image/...;base64,...`.<br><br>Video is rejected (see A8). The vendor card scores Video-MME / MMVU on<br>the full model; those numbers are not available on this serve.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>H1</code></td><td>base64 single image recognised</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 answer=&#x27;Red&#x27;</td></tr>
+<tr><td><code>H2</code></td><td>multiple images counted</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 answer=&#x27;2&#x27;</td></tr>
+<tr><td><code>H3</code></td><td>remote URL image fetched</td><td><span class="badge warn">WARN</span></td><td class="ev">http 422 answer=&#x27;&#x27;</td></tr>
+<tr><td><code>H4</code></td><td>image_url.detail accepted</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 ok</td></tr>
+<tr><td><code>H5</code></td><td>stray image_url.MimeType key tolerated</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 {&#x27;id&#x27;: &#x27;chatcmpl-bc20a533420014f5&#x27;, &#x27;object&#x27;: &#x27;chat.completion&#x27;, &#x27;created&#x27;: 1790010676, &#x27;model&#x27;: &#x27;FW-Kimi-K3&#x27;, (reference platform P0-1: 1,548 failures/24h)</td></tr>
+</tbody></table>
+    </section>
+    <section id="sec-i">
+      <h3>I. Long context
+        <span class="mini">4 pass · 0 warn · 0 fail</span></h3>
+      <p>Served context is **262,144 tokens**, not the native 1,048,576.<br><br>- Needle “74812” retrieved from a 21,717-token haystack in 3.0 s.<br>- A 90,093-token prompt completed in 10.5 s.<br>- A ~300k-word prompt was rejected in 0.1 s with a clear 400<br>  (`maximum context length is 262144 tokens`).<br>- The engine stayed healthy afterwards.<br><br>KV cache on this process is 1,628,607 tokens (~43 GiB), which is about<br>6.2 concurrent 262k-token requests. Huge in-flight prompts will fill<br>that pool; that is an operational limit, not a model-quality limit.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>I1</code></td><td>needle retrieval in long context</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 prompt_tokens=21717 answer=&#x27;74812&#x27; 3.0s</td></tr>
+<tr><td><code>I2</code></td><td>large input (~90k words) handled</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 prompt_tokens=90093 10.5s </td></tr>
+<tr><td><code>I3</code></td><td>over-limit request returns clean 400, engine survives</td><td><span class="badge pass">PASS</span></td><td class="ev">http 400 0.1s This model&#x27;s maximum context length is 262144 tokens. However, you requested 600 output tokens and your prompt contains </td></tr>
+<tr><td><code>I4</code></td><td>engine still healthy after the over-limit probe</td><td><span class="badge pass">PASS</span></td><td class="ev">GET /v1/models http 200</td></tr>
+</tbody></table>
+    </section>
+    <section id="sec-j">
+      <h3>J. Protocol surfaces
+        <span class="mini">2 pass · 2 warn · 1 fail</span></h3>
+      <p>The engine itself is bound to `127.0.0.1:8001` and does **not**<br>authenticate. J1 (invalid key → 401) is therefore a FAIL on the engine<br>path and a PASS on the public edge (`api.cflowx.in` returns 401 without<br>a key).<br><br>`/v1/responses` is available and consistent with chat for `anyOf` tool<br>schemas. `/v1/messages` (Anthropic) is present on the engine (HTTP 200)<br>but is not part of the public allowlist contract. The `developer` role<br>is rejected (`Unknown message role &#x27;developer&#x27;`). Use `system`.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>J1</code></td><td>invalid key returns 401</td><td><span class="badge fail">FAIL</span></td><td class="ev">http 200</td></tr>
+<tr><td><code>J2</code></td><td>Anthropic /v1/messages surface</td><td><span class="badge warn">WARN</span></td><td class="ev">http 200 - not served here; edge allowlists /v1/ only</td></tr>
+<tr><td><code>J3</code></td><td>/v1/responses surface</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 available</td></tr>
+<tr><td><code>J4</code></td><td>anyOf tool schema consistent across endpoints</td><td><span class="badge pass">PASS</span></td><td class="ev">chat=200 responses=200 (reference platform P1-3 mismatch)</td></tr>
+<tr><td><code>J5</code></td><td>developer role accepted</td><td><span class="badge warn">WARN</span></td><td class="ev">http 400 Unknown message role &#x27;developer&#x27; at index 0.</td></tr>
+</tbody></table>
+    </section>
+    <section id="sec-k">
+      <h3>K. Concurrency
+        <span class="mini">2 pass · 0 warn · 0 fail</span></h3>
+      <p>12 requests at concurrency 6 all succeeded (12/12 HTTP 200). Wall<br>49.6 s, p50 19.5 s, p95 24.4 s for short reasoning answers. No 429 / 5xx<br>from the engine under that load. This is a functional concurrency check,<br>not a throughput benchmark.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>K1</code></td><td>6x concurrent x 12 requests</td><td><span class="badge pass">PASS</span></td><td class="ev">ok=12/12 wall=49.6s p50=19.513s p95=24.422s</td></tr>
+<tr><td><code>K2</code></td><td>no throttling or server errors under test load</td><td><span class="badge pass">PASS</span></td><td class="ev">status spread={200: 12}</td></tr>
+</tbody></table>
+    </section>
+    <section id="sec-l">
+      <h3>L. Consistency
+        <span class="mini">4 pass · 0 warn · 0 fail</span></h3>
+      <p>The same prompt billed 95 tokens on six repeats. Aliases<br>`FW-Kimi-K3`, `kimi-k3`, and `moonshotai/Kimi-K3` are all advertised and<br>the legacy alias serves.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>L1</code></td><td>prompt_tokens identical across 6 repeats</td><td><span class="badge pass">PASS</span></td><td class="ev">values=[95]</td></tr>
+<tr><td><code>L2</code></td><td>every customer key sees the same model and billing</td><td><span class="badge pass">PASS</span></td><td class="ev">per_key={&quot;evalbot&quot;: {&quot;http&quot;: 200, &quot;prompt_tokens&quot;: 95, &quot;model&quot;: &quot;FW-Kimi-K3&quot;}}</td></tr>
+<tr><td><code>L3</code></td><td>served-model aliases both advertised</td><td><span class="badge pass">PASS</span></td><td class="ev">names=[&#x27;FW-Kimi-K3&#x27;, &#x27;kimi-k3&#x27;, &#x27;moonshotai/Kimi-K3&#x27;] (config.yaml keeps the legacy alias deliberately)</td></tr>
+<tr><td><code>L4</code></td><td>legacy alias &#x27;kimi-k3&#x27; still serves</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200</td></tr>
+</tbody></table>
+    </section>
+    <section id="sec-m">
+      <h3>M. Message shapes and roles
+        <span class="mini">8 pass · 0 warn · 0 fail</span></h3>
+      <p>Content-array text, `system`, `name`, unknown vendor extensions,<br>and both `reasoning` / `reasoning_content` history fields are accepted.<br>Orphan tool messages without a matching assistant `tool_calls` turn are<br>rejected with a precise Kimi-K3 error. Invalid roles are 400.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>M1</code></td><td>content-array text shape accepted</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200</td></tr>
+<tr><td><code>M2</code></td><td>system role accepted</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 content=&#x27;ok&#x27;</td></tr>
+<tr><td><code>M3</code></td><td>orphan tool message without assistant turn</td><td><span class="badge pass">PASS</span></td><td class="ev">http 400 Kimi K3 tool messages need a resolvable tool name: carry `tool`/`name`, or match a preceding assistant tool_ca</td></tr>
+<tr><td><code>M4</code></td><td>message .name field accepted</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200</td></tr>
+<tr><td><code>M5</code></td><td>assistant history with vendor reasoning field round-trips</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 {&#x27;id&#x27;: &#x27;chatcmpl-809dbd3cb65e9185&#x27;, &#x27;object&#x27;: &#x27;chat.completion&#x27;, &#x27;created&#x27;: 1790010761, &#x27;model&#x27;: &#x27;FW-Kimi-K3&#x27;, (reference platform P1-1: 243 failures/24h)</td></tr>
+<tr><td><code>M6</code></td><td>assistant history with reasoning_content round-trips</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 {&#x27;id&#x27;: &#x27;chatcmpl-9dd0139dc615d69f&#x27;, &#x27;object&#x27;: &#x27;chat.completion&#x27;, &#x27;created&#x27;: 1790010762, &#x27;model&#x27;: &#x27;FW-Kimi-K3&#x27;,</td></tr>
+<tr><td><code>M7</code></td><td>unknown vendor extension web_search_options</td><td><span class="badge pass">PASS</span></td><td class="ev">http 200 {&#x27;id&#x27;: &#x27;chatcmpl-b06f8dd07cffa169&#x27;, &#x27;object&#x27;: &#x27;chat.completion&#x27;, &#x27;created&#x27;: 1790010763, &#x27;model&#x27;: &#x27;FW-Kimi-K3&#x27;,</td></tr>
+<tr><td><code>M8</code></td><td>invalid role rejected</td><td><span class="badge pass">PASS</span></td><td class="ev">http 400</td></tr>
+</tbody></table>
+    </section>
+    <section id="sec-n">
+      <h3>N. Reasoning budget vs visible output
+        <span class="mini">4 pass · 0 warn · 0 fail</span></h3>
+      <p>A 3-pen / 7-sheep word problem was answered correctly (17) at<br>`max_tokens` 2000, 4000 and 8000, with visible content in every case.<br><br>Default thinking shares the completion budget. At `max_tokens=40` the<br>visible `content` was the start of the think channel<br>(“The user is asking a simple factual question…”). Setting<br>`reasoning_effort=none` on the same prompt produced a real answer<br>(“The capital of France is Paris…”). Clients that want a short answer<br>must either raise `max_tokens` or turn thinking off.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>N1</code></td><td>content present at every budget</td><td><span class="badge pass">PASS</span></td><td class="ev">rows=[{&quot;max_tokens&quot;: 2000, &quot;http&quot;: 200, &quot;reasoning_tokens&quot;: null, &quot;completion_tokens&quot;: 136, &quot;content_chars&quot;: 197, &quot;correct&quot;: true}, {&quot;max_tokens&quot;: 4000, &quot;http&quot;: 200, &quot;reasoning_tokens&quot;: null, &quot;completion_tokens&quot;: 98, &quot;content_chars&quot;: 185, &quot;correct&quot;: true}, {&quot;max_tokens&quot;: 8000, &quot;http&quot;: 200, &quot;reasoning_tokens&quot;: null, &quot;completion_tokens&quot;: 158, &quot;content_chars&quot;: 138, &quot;correct&quot;: true}]</td></tr>
+<tr><td><code>N2</code></td><td>answer correct across budgets</td><td><span class="badge pass">PASS</span></td><td class="ev">correct=[True, True, True]</td></tr>
+<tr><td><code>N3</code></td><td>small max_tokens can starve visible content</td><td><span class="badge pass">PASS</span></td><td class="ev">max_tokens=40 content=&#x27;The user is asking a simple factual question: What is the ca&#x27; reasoning_tokens=None - reference report §7 recheck #1 was exactly this probe defect</td></tr>
+<tr><td><code>N4</code></td><td>reasoning_effort=none frees the budget for content</td><td><span class="badge pass">PASS</span></td><td class="ev">content=&quot;The capital of France is Paris. It&#x27;s not only the political &quot; reasoning_tokens=None</td></tr>
+</tbody></table>
+    </section>
+    <section id="sec-s">
+      <h3>S. Public-edge security
+        <span class="mini">10 pass · 1 warn · 0 fail</span></h3>
+      <p>Measured on `https://api.cflowx.in`, not on localhost. Engine<br>admin surfaces (`/tokenize`, `/metrics`, `/health`, `/invocations`) are<br>blocked at nginx (403/404). `/v1/models` requires a key (401).<br>`/openapi.json` is publicly readable (LiteLLM schema, no secrets).<br><br>At the time this report was written the public inference path was<br>again returning `429 gateway_recovery` after a KV-full incident earlier<br>in the day. That is an admission hold, not a model failure. The engine<br>behind it answered every KVV probe in this document.</p>
+      <table class="checks"><thead><tr><th>ID</th><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+<tr><td><code>S1</code></td><td>POST /invocations blocked without credentials</td><td><span class="badge pass">PASS</span></td><td class="ev">http 404</td></tr>
+<tr><td><code>S2</code></td><td>POST /scale_elastic_ep blocked without credentials</td><td><span class="badge pass">PASS</span></td><td class="ev">http 404</td></tr>
+<tr><td><code>S3</code></td><td>POST /tokenize blocked without credentials</td><td><span class="badge pass">PASS</span></td><td class="ev">http 404</td></tr>
+<tr><td><code>S4</code></td><td>POST /detokenize blocked without credentials</td><td><span class="badge pass">PASS</span></td><td class="ev">http 404</td></tr>
+<tr><td><code>S5</code></td><td>GET /version blocked without credentials</td><td><span class="badge pass">PASS</span></td><td class="ev">http 404</td></tr>
+<tr><td><code>S6</code></td><td>GET /openapi.json blocked without credentials</td><td><span class="badge warn">WARN</span></td><td class="ev">http 200 — LiteLLM OpenAPI is publicly readable</td></tr>
+<tr><td><code>S7</code></td><td>GET /docs blocked without credentials</td><td><span class="badge pass">PASS</span></td><td class="ev">http 404</td></tr>
+<tr><td><code>S8</code></td><td>GET /metrics blocked without credentials</td><td><span class="badge pass">PASS</span></td><td class="ev">http 403</td></tr>
+<tr><td><code>S9</code></td><td>GET /health blocked without credentials</td><td><span class="badge pass">PASS</span></td><td class="ev">http 403</td></tr>
+<tr><td><code>S12</code></td><td>GET /v1/models without a key</td><td><span class="badge pass">PASS</span></td><td class="ev">http 401 Authorization Required</td></tr>
+<tr><td><code>J1-edge</code></td><td>Invalid Bearer key on the public edge</td><td><span class="badge pass">PASS</span></td><td class="ev">http 401 on /v1/models; inference paths currently also 429 gateway_recovery</td></tr>
+</tbody></table>
+    </section>
+
+  <h2>Measured response shape</h2>
+  <p>Live <code>reasoning_effort=low</code> probe, 17×23, 1.42 s:</p>
+  <pre>{
+  "object": "chat.completion",
+  "model": "FW-Kimi-K3",
+  "choices": [{
+    "finish_reason": "stop",
+    "message": {
+      "role": "assistant",
+      "content": "391",
+      "reasoning": "17*23=391. final number only. Ensure no extra."
+    }
+  }],
+  "usage": {
+    "prompt_tokens": 103,
+    "completion_tokens": 28,
+    "total_tokens": 131,
+    "prompt_tokens_details": { "cached_tokens": 0, "created_cache_tokens": 0 }
+  }
+}</pre>
+
+  <h2>Vendor-published quality numbers</h2>
+  <p>From the Moonshot card, <code>reasoning_effort=max</code>, temperature 1.0. These describe the weights, not a throughput or SLA guarantee of this 8-GPU serve. Video rows do not apply here. Columns: Kimi K3 · Claude Fable 5 · GPT-5.6 Sol · Claude Opus 4.8 · GPT-5.5.</p>
+  <h4>Reasoning &amp; knowledge</h4><table class='vendor'><thead><tr><th>Benchmark</th><th>Kimi K3</th><th>Claude Fable 5</th><th>GPT-5.6 Sol</th><th>Claude Opus 4.8</th><th>GPT-5.5</th></tr></thead><tbody><tr><td>GPQA Diamond</td><td>93.5</td><td>92.6</td><td>94.1</td><td>91.0</td><td>93.5</td></tr><tr><td>CritPt</td><td>23.4</td><td>28.6</td><td>32.3</td><td>20.9</td><td>27.1</td></tr><tr><td>AA-LCR</td><td>74.7</td><td>70.0</td><td>73.7</td><td>67.7</td><td>74.3</td></tr><tr><td>HLE-Full (no tool / with tool)</td><td>43.5 / 56.0</td><td>53.3 / 63.0</td><td>44.5 / 58.0</td><td>49.8 / 57.9</td><td>41.4 / 52.2</td></tr></tbody></table><h4>Coding</h4><table class='vendor'><thead><tr><th>Benchmark</th><th>Kimi K3</th><th>Claude Fable 5</th><th>GPT-5.6 Sol</th><th>Claude Opus 4.8</th><th>GPT-5.5</th></tr></thead><tbody><tr><td>DeepSWE</td><td>67.5</td><td>70.0</td><td>73.0</td><td>59.0</td><td>67.0</td></tr><tr><td>ProgramBench</td><td>77.8</td><td>76.8</td><td>77.6</td><td>71.9</td><td>70.8</td></tr><tr><td>Terminal-Bench 2.1</td><td>88.3</td><td>88.0</td><td>88.8</td><td>84.6</td><td>83.4</td></tr><tr><td>FrontierSWE</td><td>81.2</td><td>86.6</td><td>71.3</td><td>66.7</td><td>64.9</td></tr><tr><td>SWE-Marathon</td><td>42.0</td><td>35.0</td><td>39.0</td><td>40.0</td><td>14.0</td></tr><tr><td>PostTrainBench</td><td>36.6</td><td>41.4</td><td>34.6</td><td>34.1</td><td>28.4</td></tr><tr><td>MLS-Bench-Lite</td><td>48.3</td><td>49.9</td><td>46.2</td><td>42.8</td><td>35.5</td></tr><tr><td>SciCode</td><td>58.7</td><td>60.2</td><td>56.1</td><td>53.5</td><td>56.1</td></tr><tr><td>Kimi Code Bench 2.0</td><td>72.9</td><td>76.9</td><td>64.8</td><td>71.7</td><td>69.0</td></tr></tbody></table><h4>Agentic</h4><table class='vendor'><thead><tr><th>Benchmark</th><th>Kimi K3</th><th>Claude Fable 5</th><th>GPT-5.6 Sol</th><th>Claude Opus 4.8</th><th>GPT-5.5</th></tr></thead><tbody><tr><td>BrowseComp</td><td>91.2</td><td>88.0</td><td>90.4</td><td>84.3</td><td>84.4</td></tr><tr><td>DeepSearchQA (F1)</td><td>95.0</td><td>94.2</td><td>—</td><td>93.1</td><td>—</td></tr><tr><td>ResearchRubrics</td><td>76.2</td><td>—</td><td>73.8</td><td>73.5</td><td>64.0</td></tr><tr><td>GDPval-AA v2 (Elo)</td><td>1686</td><td>1747</td><td>1736</td><td>1593</td><td>1491</td></tr><tr><td>Toolathlon-Verified</td><td>76.5</td><td>77.9</td><td>74.9</td><td>76.2</td><td>73.5</td></tr><tr><td>MCPMark-Verified</td><td>94.5</td><td>87.4</td><td>92.9</td><td>76.4</td><td>92.9</td></tr><tr><td>MCP-Atlas</td><td>84.2</td><td>84.7</td><td>83.6</td><td>83.6</td><td>82.8</td></tr><tr><td>AutomationBench</td><td>30.8</td><td>29.1</td><td>29.7</td><td>27.2</td><td>22.7</td></tr><tr><td>JobBench</td><td>54.3</td><td>57.4</td><td>45.4</td><td>48.4</td><td>38.3</td></tr><tr><td>AA-Briefcase (Elo)</td><td>1548</td><td>1583</td><td>1495</td><td>1354</td><td>1158</td></tr><tr><td>Agents&#x27; Last Exam</td><td>28.3</td><td>25.7</td><td>29.6</td><td>27.0</td><td>26.6</td></tr><tr><td>APEX-Agents</td><td>41.0</td><td>43.3</td><td>39.9</td><td>39.4</td><td>38.5</td></tr><tr><td>OfficeQA Pro</td><td>63.3</td><td>69.9</td><td>63.2</td><td>63.9</td><td>60.9</td></tr><tr><td>SpreadsheetBench 2</td><td>34.8</td><td>34.7</td><td>32.4</td><td>31.6</td><td>29.1</td></tr><tr><td>OSWorld-Verified</td><td>84.8</td><td>85.0</td><td>83.0</td><td>83.4</td><td>79.0</td></tr><tr><td>OSWorld 2.0</td><td>58.3</td><td>66.1</td><td>62.6</td><td>55.7</td><td>49.5</td></tr><tr><td>SaaS-Bench</td><td>60.1</td><td>—</td><td>61.4</td><td>56.1</td><td>43.8</td></tr><tr><td>τ³-Banking</td><td>33.4</td><td>26.8</td><td>33.0</td><td>27.6</td><td>31.3</td></tr><tr><td>Harvey Lab-AA</td><td>94.6</td><td>93.6</td><td>87.2</td><td>91.1</td><td>86.3</td></tr><tr><td>CorpFin v2</td><td>71.6</td><td>71.8</td><td>64.4</td><td>66.7</td><td>68.4</td></tr><tr><td>Finance Agent v2</td><td>54.4</td><td>56.3</td><td>53.8</td><td>53.9</td><td>51.8</td></tr><tr><td>Legal Research Bench</td><td>44.2</td><td>49.5</td><td>48.1</td><td>43.8</td><td>40.4</td></tr></tbody></table><h4>Vision</h4><table class='vendor'><thead><tr><th>Benchmark</th><th>Kimi K3</th><th>Claude Fable 5</th><th>GPT-5.6 Sol</th><th>Claude Opus 4.8</th><th>GPT-5.5</th></tr></thead><tbody><tr><td>WorldVQA ForceAnswer</td><td>51.0</td><td>56.7</td><td>41.8</td><td>39.1</td><td>38.5</td></tr><tr><td>OmniDocBench</td><td>91.1</td><td>89.8</td><td>85.8</td><td>87.9</td><td>89.4</td></tr><tr><td>PerceptionBench</td><td>58.5</td><td>57.2</td><td>59.7</td><td>47.2</td><td>55.8</td></tr><tr><td>Video-MME (w. sub)</td><td>90.0</td><td>—</td><td>89.5</td><td>86.0</td><td>89.3</td></tr><tr><td>MMVU</td><td>82.1</td><td>—</td><td>81.2</td><td>79.2</td><td>81.7</td></tr><tr><td>BabyVision w/ python</td><td>85.7</td><td>90.5</td><td>88.9</td><td>81.2</td><td>83.6</td></tr><tr><td>MMMU-Pro (no tool / with tool)</td><td>81.6 / 83.4</td><td>81.2 / 86.5</td><td>83.0 / 84.6</td><td>78.9 / 82.7</td><td>81.2 / 83.2</td></tr><tr><td>CharXiv RQ (no tool / with tool)</td><td>84.8 / 91.3</td><td>88.9 / 93.5</td><td>84.6 / 89.1</td><td>80.5 / 89.9</td><td>84.1 / 89.0</td></tr><tr><td>MathVision (no tool / with tool)</td><td>94.3 / 97.8</td><td>94.8 / 98.6</td><td>95.8 / 97.8</td><td>86.7 / 97.1</td><td>92.2 / 96.8</td></tr><tr><td>ZeroBench pass@5 (no tool / with tool)</td><td>23.0 / 41.0</td><td>23.0 / 46.0</td><td>17.0 / 35.0</td><td>17.0 / 34.0</td><td>22.0 / 41.0</td></tr></tbody></table>
+
+  <h2>Evidence</h2>
+  <p>Raw JSON: <code>eval/runs/20260921T170500Z-kvv-engine/health_results.json</code>. Environment: <code>eval/runs/20260921T170233Z-kvv/env.json</code>. The 19 September KVV run is discarded (HTTP 0 after section B).</p>
+  <footer>Prepared 21 September 2026. No credentials are included. Public inference may still show a temporary 429 <code>gateway_recovery</code> after KV-full events; the engine results in this file are independent of that hold.</footer>
+</div>
+</body>
+</html>

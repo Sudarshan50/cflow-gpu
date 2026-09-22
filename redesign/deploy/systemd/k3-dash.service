@@ -9,6 +9,7 @@ Environment=PYTHONUNBUFFERED=1
 Environment=DASH_ADDR=0.0.0.0
 Environment=DASH_PORT=8080
 Environment=VLLM_BASE_URL=http://127.0.0.1:8001
+Environment=GATEWAY_METRICS_URL=http://127.0.0.1:8002/metrics
 Environment=PUBLIC_URL=https://api.cflowx.in/v1
 Environment=ACCESS_LOG=/var/log/k3/usage.log
 Environment=GPU_METRICS_URL=http://127.0.0.1:5000/metrics

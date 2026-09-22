@@ -1,0 +1,11 @@
+{
+  "comparison_accepted": false,
+  "baseline_artifact": "baseline-latency.json",
+  "candidate_artifact": "tail128-latency.json",
+  "error": "ValueError: Hybrid cache geometry or capacity differs",
+  "baseline_num_gpu_blocks": 2176,
+  "candidate_num_gpu_blocks": 2177,
+  "baseline_kv_cache_size_tokens": 1639153,
+  "candidate_kv_cache_size_tokens": 1639906,
+  "resolution": "Repeat both timing arms with num-gpu-blocks-override=2176; retain the strict comparison checks."
+}

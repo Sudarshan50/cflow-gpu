@@ -32,6 +32,35 @@ class ThinkingControlsTest(unittest.TestCase):
         payload = normalize_payload({"chat_template_kwargs": {"enable_thinking": False}})
         self.assertIs(payload["chat_template_kwargs"]["thinking"], False)
 
+    def test_chat_reasoning_object_reaches_native_template(self):
+        payload = normalize_payload({"reasoning": {"effort": "medium", "summary": "auto"}})
+        self.assertNotIn("reasoning", payload)
+        self.assertEqual(payload["reasoning_effort"], "high")
+        self.assertEqual(payload["chat_template_kwargs"]["thinking_effort"], "high")
+
+    def test_reasoning_and_thinking_disable_objects(self):
+        for control in (
+            {"reasoning": {"enabled": False}},
+            {"thinking": {"type": "disabled"}},
+            {"enable_thinking": False},
+        ):
+            with self.subTest(control=control):
+                payload = normalize_payload(control)
+                self.assertIs(payload["chat_template_kwargs"]["thinking"], False)
+                self.assertNotIn("reasoning", payload)
+                self.assertNotIn("thinking", payload)
+                self.assertNotIn("enable_thinking", payload)
+
+    def test_explicit_template_wins_over_reasoning_object(self):
+        payload = normalize_payload({
+            "reasoning": {"effort": "low", "enabled": False},
+            "chat_template_kwargs": {"thinking": True, "thinking_effort": "max"},
+        })
+        self.assertEqual(
+            payload["chat_template_kwargs"],
+            {"thinking": True, "thinking_effort": "max"},
+        )
+
     def test_extra_body_effort_and_template_precedence_survive_two_hops(self):
         original = {
             "reasoning_effort": "high",

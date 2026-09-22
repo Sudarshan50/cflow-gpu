@@ -358,6 +358,29 @@ class MetricsAndStatusTest(unittest.TestCase):
         )
         self.assertEqual(engine.snapshot().kv_usage, 0.98)
 
+    def test_recent_inter_token_latency_is_derived_from_counter_deltas(self):
+        engine, _, response = fake_engine()
+        engine._snapshot_ttl = 0
+        response.read.side_effect = [
+            b"vllm:inter_token_latency_seconds_sum 10\n"
+            b"vllm:inter_token_latency_seconds_count 100\n"
+            b"vllm:time_to_first_token_seconds_sum 20\n"
+            b"vllm:time_to_first_token_seconds_count 10\n"
+            b"vllm:request_prefill_time_seconds_sum 30\n"
+            b"vllm:request_prefill_time_seconds_count 10\n",
+            b"vllm:inter_token_latency_seconds_sum 16\n"
+            b"vllm:inter_token_latency_seconds_count 150\n"
+            b"vllm:time_to_first_token_seconds_sum 25\n"
+            b"vllm:time_to_first_token_seconds_count 12\n"
+            b"vllm:request_prefill_time_seconds_sum 34\n"
+            b"vllm:request_prefill_time_seconds_count 12\n",
+        ]
+        self.assertIsNone(engine.snapshot().mean_itl_seconds)
+        current = engine.snapshot()
+        self.assertAlmostEqual(current.mean_itl_seconds, .12)
+        self.assertAlmostEqual(current.mean_ttft_seconds, 2.5)
+        self.assertAlmostEqual(current.mean_prefill_seconds, 2)
+
     def test_http_5xx_is_counted_once_and_status_and_body_are_relayed(self):
         for status in (200, 400, 429, 500, 502, 503, 599):
             with self.subTest(status=status):

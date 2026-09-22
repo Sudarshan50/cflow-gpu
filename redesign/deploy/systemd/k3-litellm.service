@@ -11,6 +11,7 @@ Environment=K3_REPO_ROOT=/usr/local/lib/k3
 Environment=K3_MAX_MODEL_LEN=262144
 Environment=K3_LITELLM_WORKERS=32
 Environment=K3_LITELLM_CONFIG=/scratch/deploy-state/litellm.yaml
+Environment=STORE_MODEL_IN_DB=True
 Environment=HOME=/scratch/litellm-home
 Environment=XDG_CACHE_HOME=/scratch/litellm-home/.cache
 EnvironmentFile=-/scratch/deploy/offbox.env

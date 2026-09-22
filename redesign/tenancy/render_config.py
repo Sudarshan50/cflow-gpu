@@ -6,8 +6,15 @@ import argparse
 import os
 from pathlib import Path
 
-MODEL_INFO = """    model_info:
-      mode: chat
+PRICING = """      # USD per token: $3.30 input, $16.50 output, $0.33 cached input per 1M.
+      input_cost_per_token: 0.0000033
+      output_cost_per_token: 0.0000165
+      cache_read_input_token_cost: 0.00000033
+"""
+
+MODEL_INFO = f"""    model_info:
+      base_model: azure_ai/FW-Kimi-K3
+{PRICING}      mode: chat
       supports_vision: true
       supports_function_calling: true
       supports_tool_choice: true
@@ -23,26 +30,26 @@ BASE = f"""model_list:
       model: openai/FW-Kimi-K3
       api_base: http://127.0.0.1:8002/v1
       api_key: not-needed
-      # The gateway serves Chat; native /responses would 404 and trigger cooldown.
+{PRICING}      # The gateway serves Chat; native /responses would 404 and trigger cooldown.
       use_chat_completions_api: true
 {MODEL_INFO}  - model_name: kimi-k3
     litellm_params:
       model: openai/kimi-k3
       api_base: http://127.0.0.1:8002/v1
       api_key: not-needed
-      use_chat_completions_api: true
+{PRICING}      use_chat_completions_api: true
 {MODEL_INFO}  - model_name: moonshotai/Kimi-K3
     litellm_params:
       model: openai/moonshotai/Kimi-K3
       api_base: http://127.0.0.1:8002/v1
       api_key: not-needed
-      use_chat_completions_api: true
+{PRICING}      use_chat_completions_api: true
 {MODEL_INFO}  - model_name: default
     litellm_params:
       model: openai/FW-Kimi-K3
       api_base: http://127.0.0.1:8002/v1
       api_key: not-needed
-      use_chat_completions_api: true
+{PRICING}      use_chat_completions_api: true
 {MODEL_INFO}"""
 
 OFFBOX = """
@@ -68,6 +75,7 @@ router_settings:
 {router_redis}{fallbacks}
 
 general_settings:
+  store_model_in_db: true
   allow_requests_on_timeout: false
   # Preserve streaming usage chunks for portals; explicit include_usage:false wins.
   always_include_stream_usage: true

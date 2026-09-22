@@ -1,0 +1,242 @@
+KVV-style health check
+  endpoint : https://api.cflowx.in/v1
+  model    : FW-Kimi-K3
+  key      : evalbot (redacted)
+  sections : A,B,C,D,E,F,G,H,I,J,K,L,M,N,S
+
+A. Basic protocol
+  [PASS] A1     GET /v1/models returns target model                  http 200 names=['FW-Kimi-K3', 'kimi-k3', 'moonshotai/Kimi-K3']
+  [PASS] A2     Non-streaming chat structure                         http 200 finish=stop content='Hello!' 1.6s
+  [PASS] A3     Streaming chat frames + [DONE]                       http 200 frames=297 done=True 
+  [PASS] A4     Response model field echo                            echoed='FW-Kimi-K3' expected='FW-Kimi-K3'
+  [PASS] A5     Unknown fields in message object are ignored         http 200 accepted
+  [PASS] A6     Unknown model name returns 4xx                       http 403 (reference platform returned 503 and was flagged)
+  [PASS] A7     /v1/embeddings behaviour documented                  http 404 - no embedding model is served here
+  [PASS] A8     Video input rejected with a clear error              http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo
+
+B. Parameter validation
+  [FAIL] B1     temperature=0 accepted                               http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo
+  [FAIL] B2     temperature=2 accepted                               http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo
+  [PASS] B3     temperature=3 rejected                               http 429 want=4xx 
+  [PASS] B4     temperature=-1 rejected                              http 429 want=4xx 
+  [FAIL] B5     top_p=0.1 accepted                                   http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo
+  [PASS] B6     top_p=1.5 rejected                                   http 429 want=4xx 
+  [FAIL] B7     frequency_penalty=2 accepted                         http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo
+  [PASS] B8     frequency_penalty=5 rejected                         http 429 want=4xx 
+  [FAIL] B9     presence_penalty=-2 accepted                         http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo
+  [PASS] B10    negative max_tokens rejected                         http 429 want=4xx 
+  [FAIL] B11    unknown parameter ignored                            http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo
+  [WARN] B12    max_tokens=16 truncates                              http 429 completion_tokens=None finish=None
+  [PASS] B13    empty messages rejected                              http 429
+  [WARN] B14    stop sequence honoured                               http 429 content=''
+  [PASS] B15    seed reproducibility                                 same=True a='' b=''
+  [WARN] B16    n=2 multiple candidates                              http 429 choices=0 (reference platform: 65/65 rejected n>1)
+  [PASS] B17    oversized max_tokens handled cleanly                 http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo
+  [WARN] B18    logprobs returned when requested                     http 429 logprobs=empty (reference platform: only 14/65 channels)
+
+C. Tool calling
+  [FAIL] C1     tool_choice=auto produces a call                     http 429 calls=0
+  [FAIL] C2     tool_choice=none suppresses calls                    http 429 calls=0
+  [FAIL] C3     tool_choice=specific function forces that tool       http 429 calls=[]
+  [FAIL] C4     tool_choice=required 5/5                             0/5 produced a tool call
+  [FAIL] C5     nested schema arguments conform                      http 429 args=none
+  [FAIL] C6     correct routing among 20 tools                       http 429 picked=[]
+  [WARN] C7     parallel_tool_calls returns multiple calls           http 429 calls=0
+  [FAIL] C8     multi-turn tool result consumed                      no first-turn call
+  [WARN] C9     streamed tool_calls reassemble                       http 429 name=None args=''
+  [FAIL] C10    tool_call object shape is OpenAI-conformant          http 429 shape_ok=False
+
+D. Structured output
+  [FAIL] D1     response_format=json_object returns valid JSON       http 429 body=''
+  [FAIL] D2     json_schema strict conforms exactly                  http 429 body=''
+  [WARN] D3     $ref / $defs schema accepted                         http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, cooldown_list=
+
+E. Reasoning control
+  [FAIL] E0     default request reports reasoning_tokens             http 429 reasoning_tokens=None reasoning_len=0
+  [WARN] E1     reasoning_effort=none                                http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary
+  [WARN] E2     reasoning_effort=low                                 http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary
+  [WARN] E3     reasoning_effort=medium                              http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary
+  [WARN] E4     reasoning_effort=high                                http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary
+  [WARN] E5     reasoning_effort=xhigh                               http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary
+  [WARN] E6     reasoning_effort=max                                 http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary
+  [WARN] E7     reasoning_effort=minimal                             http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary
+  [WARN] E8     reasoning_effort=adaptive                            http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= (capability boundary
+  [SKIP] E9     reasoning_tokens grow with effort level              observed=[] monotonic=None
+  [WARN] E10    disable thinking via enable_thinking=false           http 429 reasoning_tokens=None reasoning_len=0
+  [WARN] E11    disable thinking via thinking.type=disabled          http 429 reasoning_tokens=None reasoning_len=0
+  [WARN] E12    disable thinking via chat_template_kwargs.thinking=f http 429 reasoning_tokens=None reasoning_len=0
+  [WARN] E13    disable thinking via reasoning_effort=none           http 429 reasoning_tokens=None reasoning_len=0
+  [PASS] E14    thinking.budget_tokens=128 behaviour                 http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=False, coo
+
+F. Streaming quality
+  [FAIL] F1     stream_options.include_usage delivers usage          http 429 usage={}
+  [FAIL] F2     SSE frame structure is standard                      frames=0 done=False objects_ok=False
+  [WARN] F3     streaming and non-streaming agree                    streamed=0 chars nonstream=0 chars match_head=False
+  [WARN] F4     long stream does not drop frames                     http 503 frames=0 chars=0 done=False
+
+G. Usage reporting
+  [FAIL] G-ERR  section Usage reporting crashed                      AttributeError: 'str' object has no attribute 'get'
+
+H. Multimodal
+  [FAIL] H1     base64 single image recognised                       http 503 answer=''
+  [FAIL] H2     multiple images counted                              http 503 answer=''
+  [WARN] H3     remote URL image fetched                             http 503 answer=''
+  [WARN] H4     image_url.detail accepted                            http 503 <html>
+<head><title>503 Service Temporarily Unavailable</title></head>
+<body>
+<center><h1>503 Service Temporarily Una
+  [WARN] H5     stray image_url.MimeType key tolerated               http 503 <html>
+<head><title>503 Service Temporarily Unavailable</title></head>
+<body>
+<center><h1>503 Service Tempo (reference platform 
+
+I. Long context
+  [FAIL] I-ERR  section Long context crashed                         AttributeError: 'str' object has no attribute 'get'
+
+J. Protocol and error semantics
+  [PASS] J1     invalid key returns 401                              http 401
+  [WARN] J2     Anthropic /v1/messages surface                       http 503 - not served here; edge allowlists /v1/ only
+  [WARN] J3     /v1/responses surface                                http 503 <html>
+<head><title>503 Service Temporarily Unavailable</title></head>
+<body>
+<center><h1>503 Service Tempo
+  [SKIP] J4     anyOf tool schema consistent across endpoints        /v1/responses not served
+  [WARN] J5     developer role accepted                              http 503 <html>
+<head><title>503 Service Temporarily Unavailable</title></head>
+<body>
+<center><h1>503 Service Tempo
+
+K. Concurrency
+  [FAIL] K1     6x concurrent x 12 requests                          ok=0/12 wall=0.0s p50=Nones p95=Nones
+  [WARN] K2     no throttling or server errors under test load       status spread={503: 12}
+
+L. Consistency
+  [WARN] L1     prompt_tokens identical across 6 repeats             values=[]
+  [FAIL] L-ERR  section Consistency crashed                          AttributeError: 'str' object has no attribute 'get'
+
+M. Message shapes and roles
+  [FAIL] M1     content-array text shape accepted                    http 503
+  [FAIL] M2     system role accepted                                 http 503 content=''
+  [WARN] M3     orphan tool message without assistant turn           http 503 <html>
+<head><title>503 Service Temporarily Unavailable</title></head>
+<body>
+<center><h1>503 Service Tempo
+  [WARN] M4     message .name field accepted                         http 503
+  [FAIL] M5     assistant history with vendor reasoning field round- http 503 <html>
+<head><title>503 Service Temporarily Unavailable</title></head>
+<body>
+<center><h1>503 Service Tempo (reference platform 
+  [WARN] M6     assistant history with reasoning_content round-trips http 503 <html>
+<head><title>503 Service Temporarily Unavailable</title></head>
+<body>
+<center><h1>503 Service Tempo
+  [WARN] M7     unknown vendor extension web_search_options          http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=
+  [WARN] M8     invalid role rejected                                http 503
+
+N. Reasoning budget
+  [FAIL] N-ERR  section Reasoning budget crashed                     AttributeError: 'str' object has no attribute 'get'
+
+S. Edge security
+  [PASS] S1     POST /invocations blocked without credentials        http 404 (want 403/404)
+  [PASS] S2     POST /scale_elastic_ep blocked without credentials   http 404 (want 403/404)
+  [PASS] S3     POST /tokenize blocked without credentials           http 404 (want 403/404)
+  [PASS] S4     POST /detokenize blocked without credentials         http 404 (want 403/404)
+  [PASS] S5     GET /version blocked without credentials             http 404 (want 403/404)
+  [FAIL] S6     GET /openapi.json blocked without credentials        http 200 (want 403/404)
+  [PASS] S7     GET /docs blocked without credentials                http 404 (want 403/404)
+  [PASS] S8     GET /metrics blocked without credentials             http 403 (want 403/404)
+  [PASS] S9     GET /health blocked without credentials              http 403 (want 403/404)
+  [SKIP] S10    upstream key rejected at the public edge             api-key.txt not readable
+  [WARN] S11    plaintext HTTP redirects to TLS                      http 0 (urllib follows the 301)
+
+====================================================================
+total=94  PASS=26  WARN=35  FAIL=30  SKIP=3   in 16.8s
+====================================================================
+  FAIL  B1     temperature=0 accepted :: http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call
+  FAIL  B2     temperature=2 accepted :: http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call
+  FAIL  B5     top_p=0.1 accepted :: http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call
+  FAIL  B7     frequency_penalty=2 accepted :: http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call
+  FAIL  B9     presence_penalty=-2 accepted :: http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call
+  FAIL  B11    unknown parameter ignored :: http 429 want=2xx No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call
+  WARN  B12    max_tokens=16 truncates :: http 429 completion_tokens=None finish=None
+  WARN  B14    stop sequence honoured :: http 429 content=''
+  WARN  B16    n=2 multiple candidates :: http 429 choices=0 (reference platform: 65/65 rejected n>1)
+  WARN  B18    logprobs returned when requested :: http 429 logprobs=empty (reference platform: only 14/65 channels)
+  FAIL  C1     tool_choice=auto produces a call :: http 429 calls=0
+  FAIL  C2     tool_choice=none suppresses calls :: http 429 calls=0
+  FAIL  C3     tool_choice=specific function forces that tool :: http 429 calls=[]
+  FAIL  C4     tool_choice=required 5/5 :: 0/5 produced a tool call
+  FAIL  C5     nested schema arguments conform :: http 429 args=none
+  FAIL  C6     correct routing among 20 tools :: http 429 picked=[]
+  WARN  C7     parallel_tool_calls returns multiple calls :: http 429 calls=0
+  FAIL  C8     multi-turn tool result consumed :: no first-turn call
+  WARN  C9     streamed tool_calls reassemble :: http 429 name=None args=''
+  FAIL  C10    tool_call object shape is OpenAI-conformant :: http 429 shape_ok=False
+  FAIL  D1     response_format=json_object returns valid JSON :: http 429 body=''
+  FAIL  D2     json_schema strict conforms exactly :: http 429 body=''
+  WARN  D3     $ref / $defs schema accepted :: http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=F
+  FAIL  E0     default request reports reasoning_tokens :: http 429 reasoning_tokens=None reasoning_len=0
+  WARN  E1     reasoning_effort=none :: http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= 
+  WARN  E2     reasoning_effort=low :: http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= 
+  WARN  E3     reasoning_effort=medium :: http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= 
+  WARN  E4     reasoning_effort=high :: http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= 
+  WARN  E5     reasoning_effort=xhigh :: http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= 
+  WARN  E6     reasoning_effort=max :: http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= 
+  WARN  E7     reasoning_effort=minimal :: http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= 
+  WARN  E8     reasoning_effort=adaptive :: http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks= 
+  WARN  E10    disable thinking via enable_thinking=false :: http 429 reasoning_tokens=None reasoning_len=0
+  WARN  E11    disable thinking via thinking.type=disabled :: http 429 reasoning_tokens=None reasoning_len=0
+  WARN  E12    disable thinking via chat_template_kwargs.thinking=false :: http 429 reasoning_tokens=None reasoning_len=0
+  WARN  E13    disable thinking via reasoning_effort=none :: http 429 reasoning_tokens=None reasoning_len=0
+  FAIL  F1     stream_options.include_usage delivers usage :: http 429 usage={}
+  FAIL  F2     SSE frame structure is standard :: frames=0 done=False objects_ok=False
+  WARN  F3     streaming and non-streaming agree :: streamed=0 chars nonstream=0 chars match_head=False
+  WARN  F4     long stream does not drop frames :: http 503 frames=0 chars=0 done=False
+  FAIL  G-ERR  section Usage reporting crashed :: AttributeError: 'str' object has no attribute 'get'
+  FAIL  H1     base64 single image recognised :: http 503 answer=''
+  FAIL  H2     multiple images counted :: http 503 answer=''
+  WARN  H3     remote URL image fetched :: http 503 answer=''
+  WARN  H4     image_url.detail accepted :: http 503 <html>
+<head><title>503 Service Temporarily Unavailable</title></head>
+<body>
+<center><h1>503 Service Tempor
+  WARN  H5     stray image_url.MimeType key tolerated :: http 503 <html>
+<head><title>503 Service Temporarily Unavailable</title></head>
+<body>
+<center><h1>503 Service Tempo 
+  FAIL  I-ERR  section Long context crashed :: AttributeError: 'str' object has no attribute 'get'
+  WARN  J2     Anthropic /v1/messages surface :: http 503 - not served here; edge allowlists /v1/ only
+  WARN  J3     /v1/responses surface :: http 503 <html>
+<head><title>503 Service Temporarily Unavailable</title></head>
+<body>
+<center><h1>503 Service Tempo
+  WARN  J5     developer role accepted :: http 503 <html>
+<head><title>503 Service Temporarily Unavailable</title></head>
+<body>
+<center><h1>503 Service Tempo
+  FAIL  K1     6x concurrent x 12 requests :: ok=0/12 wall=0.0s p50=Nones p95=Nones
+  WARN  K2     no throttling or server errors under test load :: status spread={503: 12}
+  WARN  L1     prompt_tokens identical across 6 repeats :: values=[]
+  FAIL  L-ERR  section Consistency crashed :: AttributeError: 'str' object has no attribute 'get'
+  FAIL  M1     content-array text shape accepted :: http 503
+  FAIL  M2     system role accepted :: http 503 content=''
+  WARN  M3     orphan tool message without assistant turn :: http 503 <html>
+<head><title>503 Service Temporarily Unavailable</title></head>
+<body>
+<center><h1>503 Service Tempo
+  WARN  M4     message .name field accepted :: http 503
+  FAIL  M5     assistant history with vendor reasoning field round-trips :: http 503 <html>
+<head><title>503 Service Temporarily Unavailable</title></head>
+<body>
+<center><h1>503 Service Tempo 
+  WARN  M6     assistant history with reasoning_content round-trips :: http 503 <html>
+<head><title>503 Service Temporarily Unavailable</title></head>
+<body>
+<center><h1>503 Service Tempo
+  WARN  M7     unknown vendor extension web_search_options :: http 429 No deployments available for selected model, Try again in 5 seconds. Passed model=FW-Kimi-K3. pre-call-checks=
+  WARN  M8     invalid role rejected :: http 503
+  FAIL  N-ERR  section Reasoning budget crashed :: AttributeError: 'str' object has no attribute 'get'
+  FAIL  S6     GET /openapi.json blocked without credentials :: http 200 (want 403/404)
+  WARN  S11    plaintext HTTP redirects to TLS :: http 0 (urllib follows the 301)
+
+wrote /root/cflow-gpu/eval/runs/20260921T170233Z-kvv/health_results.json

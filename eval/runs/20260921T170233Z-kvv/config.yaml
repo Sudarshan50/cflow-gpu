@@ -1,0 +1,41 @@
+# vLLM fallback for Kimi-K3 on 8x MI355X.
+# Known-good production shape from K3-DEPLOYMENT.md, plus capacity-first
+# admission and C2 chunk size. No fp8 KV (Z5). No DCP (unsupported on hybrid).
+
+served-model-name:
+  - FW-Kimi-K3
+  - kimi-k3
+  - moonshotai/Kimi-K3
+trust-remote-code: true
+
+tensor-parallel-size: 8
+enable-expert-parallel: true
+load-format: fastsafetensors
+
+max-model-len: 262144
+max-num-seqs: 427
+max-num-batched-tokens: 16384
+gpu-memory-utilization: 0.92
+
+enable-prefix-caching: true
+prefix-match-unit: 128
+enable-prompt-tokens-details: true
+
+scheduling-policy: priority
+long-prefill-token-threshold: 16384
+
+# A3 removed 2026-09-20. Native host L2 is write-only on this vLLM path
+# (a3-readpath: CPU→GPU 0, external hits 0, ~806 GB GPU→CPU per wave).
+
+compilation-config:
+  cudagraph_mode: FULL_DECODE_ONLY
+  custom_ops:
+    - "+fused_rms_norm_gated"
+
+reasoning-parser: kimi_k3
+tool-call-parser: kimi_k3
+enable-auto-tool-choice: true
+no-enable-log-requests: true
+
+host: 127.0.0.1
+port: 8001

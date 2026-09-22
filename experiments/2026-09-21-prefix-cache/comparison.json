@@ -1,0 +1,137 @@
+{
+  "baseline_commit": "9f951e066358870466ce9875da63b174d5818b95",
+  "fixture_revision": "prefix-latency-v1",
+  "cache_block_control": 2176,
+  "num_gpu_blocks": "2176",
+  "kv_cache_size_tokens": "1639153",
+  "matched_requests": 66,
+  "cases": {
+    "cold-7675": {
+      "baseline": {
+        "samples": 8,
+        "cached_tokens": [
+          0
+        ],
+        "ttft_median_seconds": 0.6998898800011375,
+        "ttft_min_seconds": 0.6873173960048007,
+        "ttft_max_seconds": 1.3368686719913967
+      },
+      "tail128": {
+        "samples": 8,
+        "cached_tokens": [
+          0
+        ],
+        "ttft_median_seconds": 0.8904241100026411,
+        "ttft_min_seconds": 0.8828918940125732,
+        "ttft_max_seconds": 1.4266342449991498
+      },
+      "tail128_ttft_change_percent": 27.223458353361817
+    },
+    "exact-1024": {
+      "baseline": {
+        "samples": 8,
+        "cached_tokens": [
+          768
+        ],
+        "ttft_median_seconds": 0.2080562685005134,
+        "ttft_min_seconds": 0.20609730399155524,
+        "ttft_max_seconds": 0.21054831899527926
+      },
+      "tail128": {
+        "samples": 8,
+        "cached_tokens": [
+          768
+        ],
+        "ttft_median_seconds": 0.2024078210015432,
+        "ttft_min_seconds": 0.20115409699792508,
+        "ttft_max_seconds": 0.2076945699955104
+      },
+      "tail128_ttft_change_percent": -2.714865329306937
+    },
+    "exact-7680": {
+      "baseline": {
+        "samples": 8,
+        "cached_tokens": [
+          6912
+        ],
+        "ttft_median_seconds": 0.19573800600483082,
+        "ttft_min_seconds": 0.19038127700332552,
+        "ttft_max_seconds": 0.6922303219907917
+      },
+      "tail128": {
+        "samples": 8,
+        "cached_tokens": [
+          6912
+        ],
+        "ttft_median_seconds": 0.20395982450281736,
+        "ttft_min_seconds": 0.19211867699050345,
+        "ttft_max_seconds": 0.5561530669947388
+      },
+      "tail128_ttft_change_percent": 4.20042007467043
+    },
+    "exact-988": {
+      "baseline": {
+        "samples": 8,
+        "cached_tokens": [
+          768
+        ],
+        "ttft_median_seconds": 0.2109546169958776,
+        "ttft_min_seconds": 0.20719951900537126,
+        "ttft_max_seconds": 0.21629798000503797
+      },
+      "tail128": {
+        "samples": 8,
+        "cached_tokens": [
+          896
+        ],
+        "ttft_median_seconds": 0.20760219999647234,
+        "ttft_min_seconds": 0.20273836099659093,
+        "ttft_max_seconds": 0.20833980399766006
+      },
+      "tail128_ttft_change_percent": -1.5891650285477121
+    },
+    "sibling-2304": {
+      "baseline": {
+        "samples": 8,
+        "cached_tokens": [
+          2304
+        ],
+        "ttft_median_seconds": 0.659805352006515,
+        "ttft_min_seconds": 0.6538819919951493,
+        "ttft_max_seconds": 1.2639166279986966
+      },
+      "tail128": {
+        "samples": 8,
+        "cached_tokens": [
+          2304
+        ],
+        "ttft_median_seconds": 0.8638805629962008,
+        "ttft_min_seconds": 0.849417536999681,
+        "ttft_max_seconds": 1.4347954069962725
+      },
+      "tail128_ttft_change_percent": 30.929608310856914
+    },
+    "stable-chat-8796": {
+      "baseline": {
+        "samples": 8,
+        "cached_tokens": [
+          8448
+        ],
+        "ttft_median_seconds": 0.19954250250157202,
+        "ttft_min_seconds": 0.19808507901325356,
+        "ttft_max_seconds": 0.20168610200926196
+      },
+      "tail128": {
+        "samples": 8,
+        "cached_tokens": [
+          8704
+        ],
+        "ttft_median_seconds": 0.2120317164954031,
+        "ttft_min_seconds": 0.20700209100323264,
+        "ttft_max_seconds": 0.22071115199651103
+      },
+      "tail128_ttft_change_percent": 6.258924207755023
+    }
+  },
+  "note": "Sequential c=1 microbenchmarks; eight measured requests per case, not a throughput or production-tail claim."
+}

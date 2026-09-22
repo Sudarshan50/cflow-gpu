@@ -27,6 +27,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VLLM_BASE = os.environ.get("VLLM_BASE_URL", "http://127.0.0.1:8001")
 METRICS_URL = VLLM_BASE.rstrip("/") + "/metrics"
+GATEWAY_METRICS_URL = os.environ.get(
+    "GATEWAY_METRICS_URL", "http://127.0.0.1:8002/metrics")
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "https://api.cflowx.in/v1")
 ACCESS_LOG = os.environ.get("ACCESS_LOG", "/var/log/k3/usage.log")
 GPU_METRICS_URL = os.environ.get("GPU_METRICS_URL", "http://127.0.0.1:5000/metrics")
@@ -214,6 +216,26 @@ def parse_prometheus(text):
     return scalars, buckets, info
 
 
+def parse_prometheus_samples(text):
+    """Return labelled Prometheus samples without collapsing dimensions."""
+    out = []
+    for line in text.splitlines():
+        if not line or line[0] == "#":
+            continue
+        m = _SAMPLE_RE.match(line)
+        if not m:
+            continue
+        value = _to_float(m.group("value"))
+        if value is None:
+            continue
+        out.append({
+            "name": m.group("name"),
+            "labels": dict(_LABEL_RE.findall(m.group("labels") or "")),
+            "value": value,
+        })
+    return out
+
+
 def pick(mapping, key, store):
     """Resolve the first present candidate name for a logical metric."""
     for candidate in mapping[key]:
@@ -339,7 +361,8 @@ def parse_access_line(line):
             "path": m.group("path").split("?", 1)[0],
             "req_s": _to_float(m.group("req")),
             "up_s": _to_float(m.group("up")),
-            "in": 0,
+            # The live k3usage format does not log request-body bytes.
+            "in": None,
             "out": int(m.group("out")),
             "ip": m.group("ip"),
             "cls": (m.group("cls") or "").strip(" -") or None,
@@ -451,7 +474,7 @@ class AccessTail:
         for r in rows:
             cls = "%dxx" % (r["status"] // 100)
             by_status[cls] = by_status.get(cls, 0) + 1
-            if r["status"] in (401, 403, 429):
+            if r["status"] >= 400:
                 key = "s%d" % r["status"]
                 by_status[key] = by_status.get(key, 0) + 1
 
@@ -459,10 +482,12 @@ class AccessTail:
             c = per_cust.setdefault(name, {
                 "customer": name, "requests": 0, "errors": 0, "in_bytes": 0,
                 "out_bytes": 0, "last_seen": 0.0, "ips": set(), "lat": [],
-                "throttled": 0,
+                "throttled": 0, "in_samples": 0,
             })
             c["requests"] += 1
-            c["in_bytes"] += r["in"]
+            if r["in"] is not None:
+                c["in_bytes"] += r["in"]
+                c["in_samples"] += 1
             c["out_bytes"] += r["out"]
             c["last_seen"] = max(c["last_seen"], r["ts"])
             c["ips"].add(r["ip"])
@@ -484,7 +509,7 @@ class AccessTail:
                 "share": c["requests"] / len(rows) if rows else None,
                 "p50_s": percentile(c["lat"], 0.5),
                 "p95_s": percentile(c["lat"], 0.95),
-                "in_bytes": c["in_bytes"],
+                "in_bytes": c["in_bytes"] if c["in_samples"] else None,
                 "out_bytes": c["out_bytes"],
                 "distinct_ips": len(c["ips"]),
                 "last_seen": c["last_seen"] or None,
@@ -621,8 +646,9 @@ class LogRollup:
                 "server_error_rate": (sum(1 for r in sel if r[2] >= 500) / total)
                                      if total else None,
                 "req_pm": (total / secs * 60) if total else 0.0,
-                "tokens_in_bytes": sum(r[5] for r in sel),
-                "tokens_out_bytes": sum(r[6] for r in sel),
+                "request_bytes": (sum(r[5] for r in sel if r[5] is not None)
+                                  if any(r[5] is not None for r in sel) else None),
+                "response_bytes": sum(r[6] for r in sel),
                 "p50_s": percentile(lat, 0.5),
                 "p95_s": percentile(lat, 0.95),
                 "p99_s": percentile(lat, 0.99),
@@ -642,6 +668,222 @@ class LogRollup:
             return dict(self.data)
 
 
+GATEWAY_COUNTERS = {
+    "k3_gateway_requests_total",
+    "k3_gateway_workload_rejections_total",
+    "k3_gateway_admission_queued_total",
+    "k3_gateway_admission_queued_admitted_total",
+    "k3_gateway_admission_queue_timeouts_total",
+    "k3_gateway_admission_queue_full_total",
+    "k3_gateway_admission_cancelled_total",
+    "k3_gateway_engine_errors_total",
+    "k3_gateway_client_disconnects_total",
+    "k3_gateway_rescued_from_rejection_total",
+    "k3_gateway_token_count_mismatches_total",
+    "k3_gateway_inspection_failures_total",
+}
+GATEWAY_GAUGES = {
+    "k3_gateway_workload_active_requests",
+    "k3_gateway_workload_reserved_tokens",
+    "k3_gateway_workload_large_context_requests",
+    "k3_gateway_workload_long_output_requests",
+    "k3_gateway_workload_long_output_last_admission_limit",
+    "k3_gateway_admission_queued_requests",
+    "k3_gateway_admission_queued_tokens",
+    "k3_gateway_admission_queued_bytes",
+    "k3_gateway_tokenizer_quarantined",
+}
+
+
+def _metric_key(name, labels):
+    return name, tuple(sorted(labels.items()))
+
+
+def _labelled_rows(values, metric, delta_from=None):
+    rows = []
+    for (name, label_items), value in values.items():
+        if name != metric:
+            continue
+        if delta_from is not None:
+            before = delta_from.get((name, label_items))
+            value = None if before is None or value < before else value - before
+        row = dict(label_items)
+        row["value"] = value
+        rows.append(row)
+    return sorted(rows, key=lambda r: tuple(sorted(r.items())))
+
+
+class GatewayMonitor:
+    """Scrape the control-plane metrics that decide whether work is admitted."""
+
+    def __init__(self, url=GATEWAY_METRICS_URL):
+        self.url = url
+        self.lock = threading.Lock()
+        self.samples = deque(maxlen=HISTORY_LEN)
+        self.state = "connecting"
+        self.detail = "no scrape yet"
+        self.last_success = None
+        self.scrapes = 0
+
+    def scrape_once(self):
+        try:
+            with urllib.request.urlopen(self.url, timeout=4) as r:
+                body = r.read().decode("utf-8", "replace")
+        except Exception as e:
+            with self.lock:
+                self.state = "unreachable"
+                self.detail = "%s: %s" % (type(e).__name__, e)
+            return
+
+        samples = parse_prometheus_samples(body)
+        if not samples:
+            with self.lock:
+                self.state = "no_metrics"
+                self.detail = "endpoint returned no gateway metrics"
+            return
+
+        counters, gauges, latency = {}, {}, {}
+        for sample in samples:
+            name, labels, value = sample["name"], sample["labels"], sample["value"]
+            key = _metric_key(name, labels)
+            if name in GATEWAY_COUNTERS:
+                counters[key] = value
+            elif name in GATEWAY_GAUGES:
+                gauges[key] = value
+            elif name.startswith("k3_gateway_") and (
+                    name.endswith("_seconds") or name.endswith("_seconds_count")):
+                latency[key] = value
+
+        now = time.time()
+        with self.lock:
+            self.samples.append({
+                "ts": now, "counters": counters, "gauges": gauges,
+                "latency": latency,
+            })
+            self.state = "up"
+            self.detail = "scraped ok"
+            self.last_success = now
+            self.scrapes += 1
+
+    @staticmethod
+    def _scalar(values, name):
+        return values.get((name, ()))
+
+    @staticmethod
+    def _latency_rows(values):
+        rows = {}
+        prefixes = {
+            "k3_gateway_ttft_seconds": "ttft",
+            "k3_gateway_request_seconds": "request",
+            "k3_gateway_admission_wait_seconds": "admission_wait",
+        }
+        for (name, label_items), value in values.items():
+            labels = dict(label_items)
+            traffic_class = labels.get("class")
+            if not traffic_class:
+                continue
+            base = name[:-len("_count")] if name.endswith("_count") else name
+            kind = prefixes.get(base)
+            if not kind:
+                continue
+            row = rows.setdefault(traffic_class, {"traffic_class": traffic_class})
+            if name.endswith("_count"):
+                row[kind + "_count"] = value
+            else:
+                q = labels.get("quantile")
+                if q:
+                    row[kind + "_p" + str(int(float(q) * 100))] = value
+        return sorted(rows.values(), key=lambda r: r["traffic_class"])
+
+    def view(self):
+        now = time.time()
+        with self.lock:
+            samples = list(self.samples)
+            state, detail = self.state, self.detail
+            last_success, scrapes = self.last_success, self.scrapes
+        age = None if last_success is None else max(0.0, now - last_success)
+        stale = state != "up" or age is None or age > SCRAPE_INTERVAL * 3
+        source = {
+            "state": state, "detail": detail, "url": self.url,
+            "last_success": last_success, "age_s": age, "stale": stale,
+            "scrapes": scrapes,
+        }
+        if not samples:
+            return {"source": source, "current": None, "recent": None}
+
+        latest = samples[-1]
+        anchor = samples[0]
+        for sample in reversed(samples[:-1]):
+            if latest["ts"] - sample["ts"] >= ACCESS_WINDOW_S:
+                anchor = sample
+                break
+        covered = latest["ts"] - anchor["ts"]
+        counters, gauges = latest["counters"], latest["gauges"]
+        before = anchor["counters"] if anchor is not latest else {}
+
+        def admission(values, delta_from=None):
+            names = {
+                "queued": "k3_gateway_admission_queued_total",
+                "admitted_after_wait": "k3_gateway_admission_queued_admitted_total",
+                "timeouts": "k3_gateway_admission_queue_timeouts_total",
+                "full": "k3_gateway_admission_queue_full_total",
+                "cancelled": "k3_gateway_admission_cancelled_total",
+            }
+            out = {}
+            for key, name in names.items():
+                val = self._scalar(values, name)
+                prior = self._scalar(delta_from, name) if delta_from is not None else None
+                out[key] = (None if val is None or
+                            (delta_from is not None and (prior is None or val < prior))
+                            else val - prior if delta_from is not None else val)
+            return out
+
+        current = {
+            "active_requests": self._scalar(
+                gauges, "k3_gateway_workload_active_requests"),
+            "reserved_tokens": self._scalar(
+                gauges, "k3_gateway_workload_reserved_tokens"),
+            "large_context_requests": self._scalar(
+                gauges, "k3_gateway_workload_large_context_requests"),
+            "long_output_requests": self._scalar(
+                gauges, "k3_gateway_workload_long_output_requests"),
+            "long_output_limit": self._scalar(
+                gauges, "k3_gateway_workload_long_output_last_admission_limit"),
+            "queued_requests": self._scalar(
+                gauges, "k3_gateway_admission_queued_requests"),
+            "queued_tokens": self._scalar(
+                gauges, "k3_gateway_admission_queued_tokens"),
+            "queued_bytes": self._scalar(
+                gauges, "k3_gateway_admission_queued_bytes"),
+            "tokenizer_quarantined": self._scalar(
+                gauges, "k3_gateway_tokenizer_quarantined"),
+            "admission": admission(counters),
+            "request_outcomes": _labelled_rows(
+                counters, "k3_gateway_requests_total"),
+            "rejection_reasons": _labelled_rows(
+                counters, "k3_gateway_workload_rejections_total"),
+            "latency": self._latency_rows(latest["latency"]),
+        }
+        recent = {
+            "seconds": covered,
+            "partial": covered < ACCESS_WINDOW_S * 0.95,
+            "admission": admission(counters, before),
+            "request_outcomes": _labelled_rows(
+                counters, "k3_gateway_requests_total", before),
+            "rejection_reasons": _labelled_rows(
+                counters, "k3_gateway_workload_rejections_total", before),
+            "engine_errors": sum(
+                r["value"] or 0 for r in _labelled_rows(
+                    counters, "k3_gateway_engine_errors_total", before)),
+        }
+        return {
+            "source": source,
+            "current": None if stale else current,
+            "last_current": current,
+            "recent": recent,
+        }
+
+
 class Monitor:
     def __init__(self):
         self.lock = threading.Lock()
@@ -651,6 +893,7 @@ class Monitor:
         self.server_state = "connecting"
         self.server_detail = "no scrape yet"
         self.last_error = None
+        self.last_success = None
         self.scrape_count = 0
         self.reset_count = 0
         self.started = time.time()
@@ -764,6 +1007,7 @@ class Monitor:
             self.server_state = "up"
             self.server_detail = "scraped ok (HTTP %d)" % code
             self.last_error = None
+            self.last_success = now
 
     def _degrade(self, state, detail):
         with self.lock:
@@ -915,15 +1159,20 @@ class Monitor:
             uptime = time.time() - self.started
             cache_cfg = dict(self.cache_config)
             facts = dict(self.facts)
+            last_success = self.last_success
+
+        now = time.time()
+        engine_age = None if last_success is None else max(0.0, now - last_success)
+        engine_stale = state != "up" or engine_age is None or engine_age > SCRAPE_INTERVAL * 3
 
         # Each sample carries its own histogram snapshot for windowed
         # percentiles; strip those internals from the wire payload.
-        latest = {k: v for k, v in samples[-1].items()
-                  if not k.startswith("_")} if samples else None
+        latest = ({k: v for k, v in samples[-1].items()
+                   if not k.startswith("_")} if samples and not engine_stale else None)
 
         # Windowed throughput from counter endpoints (robust to scrape jitter).
         window = None
-        if len(samples) >= 2:
+        if len(samples) >= 2 and not engine_stale:
             newest = samples[-1]
             anchor = samples[0]
             for s in reversed(samples[:-1]):
@@ -966,7 +1215,7 @@ class Monitor:
 
         # Latency percentiles over the trailing window, from bucket deltas.
         lat = {}
-        if samples:
+        if samples and not engine_stale:
             base_idx = 0
             for i, s in enumerate(samples):
                 if samples[-1]["ts"] - s["ts"] <= RATE_WINDOW_S:
@@ -1028,12 +1277,36 @@ class Monitor:
         } for p in downsample(series, SERIES_POINTS)]
 
         access = ACCESS.view()
+        gateway = GATEWAY.view()
         capacity = self.capacity_view(samples[-1] if samples else None, window, cache_cfg)
+        if engine_stale:
+            capacity = self.capacity_view(None, None, cache_cfg)
+        sources = {
+            "engine": {
+                "state": state, "detail": detail, "url": METRICS_URL,
+                "last_success": last_success, "age_s": engine_age,
+                "stale": engine_stale,
+            },
+            "gateway": gateway["source"],
+            "edge": {
+                "state": "up" if access.get("available") else "unavailable",
+                "detail": access.get("error") or "usage log readable",
+                "stale": not access.get("available"),
+            },
+            "gpu": {
+                "state": "up" if not gpu.get("error") else "unavailable",
+                "detail": gpu.get("error") or "metrics available",
+                "last_success": gpu.get("ts"),
+                "age_s": (now - gpu["ts"]) if gpu.get("ts") else None,
+                "stale": bool(gpu.get("error")) or not gpu.get("ts"),
+            },
+        }
         return {
-            "now": time.time(),
+            "now": now,
             "server": {"state": state, "detail": detail, "url": VLLM_BASE,
                        "scrapes": scrapes, "counter_resets": resets,
                        "dash_uptime_s": uptime},
+            "sources": sources,
             "endpoint": {
                 "public_url": PUBLIC_URL,
                 "model": facts.get("model"),
@@ -1048,10 +1321,12 @@ class Monitor:
             "latest": latest,
             "latency": lat,
             "gpu": gpu,
+            "gateway": gateway,
             "series": series,
             "access": access,
             "rollup": ROLLUP.view(),
-            "alerts": self.alerts(state, window, latest, capacity, access, facts),
+            "alerts": self.alerts(
+                state, window, latest, capacity, access, facts, gateway),
         }
 
     @staticmethod
@@ -1095,7 +1370,7 @@ class Monitor:
         }
 
     @staticmethod
-    def alerts(state, window, latest, capacity, access, facts):
+    def alerts(state, window, latest, capacity, access, facts, gateway=None):
         """Only conditions an operator would act on. No workload targets.
 
         Deliberately excludes "throughput is below X": this endpoint serves
@@ -1108,6 +1383,26 @@ class Monitor:
             out.append({"level": "bad",
                         "text": "Engine is not answering /metrics (%s). Serving is "
                                 "probably down - check `systemctl status k3`." % state})
+        gateway_supplied = gateway is not None
+        gateway = gateway or {}
+        if gateway_supplied and (gateway.get("source") or {}).get("state") != "up":
+            out.append({"level": "bad",
+                        "text": "Gateway metrics are unavailable; admission and "
+                                "control-plane health are unknown."})
+        gw_current = gateway.get("current") or {}
+        if gw_current.get("tokenizer_quarantined"):
+            out.append({"level": "bad",
+                        "text": "Gateway tokenizer is quarantined; inspected token "
+                                "counts cannot be trusted."})
+        recent_admission = (gateway.get("recent") or {}).get("admission") or {}
+        if recent_admission.get("timeouts"):
+            out.append({"level": "warn",
+                        "text": "%d admission request(s) timed out in the observed "
+                                "gateway window." % recent_admission["timeouts"]})
+        if (gateway.get("recent") or {}).get("engine_errors"):
+            out.append({"level": "bad",
+                        "text": "%d gateway engine error(s) occurred in the observed "
+                                "window." % gateway["recent"]["engine_errors"]})
         waiting = latest.get("waiting")
         if waiting:
             out.append({"level": "warn",
@@ -1136,8 +1431,8 @@ class Monitor:
         throttled = (access.get("by_status") or {}).get("s429", 0)
         if throttled:
             out.append({"level": "warn",
-                        "text": "%d request(s) rate-limited (429). A customer is "
-                                "hitting its per-key cap." % throttled})
+                        "text": "%d HTTP 429 response(s). This may be a tenant limit "
+                                "or an upstream routing response." % throttled})
         unauth = (access.get("by_status") or {}).get("s401", 0)
         if unauth >= 20:
             out.append({"level": "warn",
@@ -1196,6 +1491,16 @@ class Monitor:
                     self.gpu["error"] = "%s: %s" % (type(e).__name__, e)
             time.sleep(GPU_INTERVAL)
 
+    def run_gateway_loop(self):
+        while True:
+            try:
+                GATEWAY.scrape_once()
+            except Exception as e:
+                with GATEWAY.lock:
+                    GATEWAY.state = "monitor_error"
+                    GATEWAY.detail = "%s: %s" % (type(e).__name__, e)
+            time.sleep(SCRAPE_INTERVAL)
+
     def run_facts_loop(self):
         while True:
             try:
@@ -1207,6 +1512,7 @@ class Monitor:
 
 ACCESS = AccessTail(ACCESS_LOG)
 ROLLUP = LogRollup(ACCESS_LOG)
+GATEWAY = GatewayMonitor()
 MON = Monitor()
 
 HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
@@ -1254,6 +1560,7 @@ def main():
     threading.Thread(target=MON.run_access_loop, daemon=True).start()
     threading.Thread(target=MON.run_rollup_loop, daemon=True).start()
     threading.Thread(target=MON.run_gpu_loop, daemon=True).start()
+    threading.Thread(target=MON.run_gateway_loop, daemon=True).start()
     threading.Thread(target=MON.run_facts_loop, daemon=True).start()
     srv = ThreadingHTTPServer((LISTEN_ADDR, LISTEN_PORT), Handler)
     srv.daemon_threads = True

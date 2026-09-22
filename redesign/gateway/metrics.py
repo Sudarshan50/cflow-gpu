@@ -52,6 +52,7 @@ class Registry:
         self._counters: dict[tuple[str, tuple[tuple[str, str], ...]], float] = {}
         self._ttft: dict[str, LatencySeries] = {}
         self._total: dict[str, LatencySeries] = {}
+        self._admission_wait: dict[str, LatencySeries] = {}
 
     def increment(self, name: str, value: float = 1.0, **labels: str) -> None:
         key = (name, tuple(sorted(labels.items())))
@@ -66,11 +67,16 @@ class Registry:
         with self._lock:
             self._total.setdefault(traffic_class, LatencySeries()).observe(seconds)
 
+    def observe_admission_wait(self, traffic_class: str, seconds: float) -> None:
+        with self._lock:
+            self._admission_wait.setdefault(traffic_class, LatencySeries()).observe(seconds)
+
     def render(self) -> str:
         with self._lock:
             counters = dict(self._counters)
             ttft = {k: sorted(v.samples) for k, v in self._ttft.items()}
             total = {k: sorted(v.samples) for k, v in self._total.items()}
+            admission_wait = {k: sorted(v.samples) for k, v in self._admission_wait.items()}
 
         lines: list[str] = []
         for (name, labels), value in sorted(counters.items()):
@@ -80,6 +86,7 @@ class Registry:
 
         lines += _render_quantiles("ttft_seconds", ttft)
         lines += _render_quantiles("request_seconds", total)
+        lines += _render_quantiles("admission_wait_seconds", admission_wait)
         return "\n".join(lines) + "\n"
 
 

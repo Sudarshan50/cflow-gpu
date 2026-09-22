@@ -91,6 +91,16 @@ R = Result()
 CTX = ssl.create_default_context()
 
 
+def _is_retryable(code, payload):
+    if code in (429, 502, 503):
+        return True
+    if isinstance(payload, dict):
+        msg = str((payload.get("error") or {}).get("message") or payload.get("error") or "")
+        if "No deployments available" in msg or "Try again" in msg:
+            return True
+    return False
+
+
 def http(method, url, key=None, body=None, timeout=TIMEOUT, extra_headers=None,
          raw_body=None):
     """One request. Returns (code, parsed_or_text, elapsed_s, error_str)."""
@@ -104,22 +114,34 @@ def http(method, url, key=None, body=None, timeout=TIMEOUT, extra_headers=None,
         data = raw_body if isinstance(raw_body, bytes) else raw_body.encode()
     elif body is not None:
         data = json.dumps(body).encode()
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    last = (0, None, 0.0, "no attempt")
     t0 = time.time()
-    try:
-        with urllib.request.urlopen(req, timeout=timeout, context=CTX) as r:
-            text = r.read().decode("utf-8", "replace")
-            code = r.status
-    except urllib.error.HTTPError as e:
-        text = e.read().decode("utf-8", "replace")
-        code = e.code
-    except Exception as e:
-        return 0, None, time.time() - t0, "%s: %s" % (type(e).__name__, e)
-    elapsed = time.time() - t0
-    try:
-        return code, json.loads(text), elapsed, None
-    except Exception:
-        return code, text, elapsed, None
+    for attempt in range(6):
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=CTX) as r:
+                text = r.read().decode("utf-8", "replace")
+                code = r.status
+        except urllib.error.HTTPError as e:
+            text = e.read().decode("utf-8", "replace")
+            code = e.code
+        except Exception as e:
+            last = (0, None, time.time() - t0, "%s: %s" % (type(e).__name__, e))
+            if attempt < 5:
+                time.sleep(min(8, 1.5 ** attempt))
+                continue
+            return last
+        elapsed = time.time() - t0
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            parsed = text
+        last = (code, parsed, elapsed, None)
+        if _is_retryable(code, parsed) and attempt < 5:
+            time.sleep(min(8, 1.5 ** attempt + 1.0))
+            continue
+        return last
+    return last
 
 
 def stream(url, key, body, timeout=TIMEOUT):
@@ -193,7 +215,9 @@ def reasoning_of(d):
 
 
 def usage_of(d):
-    return (d or {}).get("usage") or {}
+    if not isinstance(d, dict):
+        return {}
+    return d.get("usage") or {}
 
 
 def reasoning_tokens(d):

@@ -26,7 +26,28 @@ from .policy import TenancyPolicy
 _POLICY = TenancyPolicy(
     max_model_len=int(os.environ.get("K3_MAX_MODEL_LEN", "262144")),
     offbox_configured=bool(os.environ.get("K3_OFFBOX_URL", "").strip()),
+    defer_local_context_check=os.environ.get("K3_WORKLOAD_GUARD") == "1",
 )
+
+
+def _add_reasoning_alias(response) -> None:
+    """Expose both current LiteLLM and OpenAI-compatible reasoning names."""
+    choices = getattr(response, "choices", None)
+    if not isinstance(choices, list):
+        return
+    for choice in choices:
+        message = getattr(choice, "message", None)
+        part = message if message is not None else getattr(choice, "delta", None)
+        if part is None:
+            continue
+        if isinstance(part, dict):
+            reasoning = part.get("reasoning_content")
+            if reasoning is not None:
+                part["reasoning"] = reasoning
+            continue
+        reasoning = getattr(part, "reasoning_content", None)
+        if reasoning is not None:
+            setattr(part, "reasoning", reasoning)
 
 
 class K3TenancyCallback(CustomLogger):
@@ -77,7 +98,8 @@ class K3TenancyCallback(CustomLogger):
             key: data[key] for key in (
                 "messages", "tools", "functions", "extra_body", "chat_template_kwargs",
                 "thinking_effort", "reasoning_effort", "cache_salt", "prompt_cache_key",
-                "kv_cache_salt", "priority",
+                "kv_cache_salt", "priority", "reasoning", "thinking",
+                "enable_thinking",
             ) if key in data
         })
         original_keys = tuple(normalized)
@@ -105,6 +127,10 @@ class K3TenancyCallback(CustomLogger):
         finalize_response_cache(kwargs, context, call_type)
         return kwargs
 
+    async def async_post_call_success_hook(self, data, user_api_key_dict, response):
+        _add_reasoning_alias(response)
+        return response
+
     async def async_post_call_streaming_iterator_hook(self, user_api_key_dict, response, request_data):
         logging_obj = request_data.get("litellm_logging_obj")
         cache_details = logging_obj.caching_details if isinstance(logging_obj, Logging) else None
@@ -114,6 +140,7 @@ class K3TenancyCallback(CustomLogger):
                 cached_usage_details, logging_obj.model_call_details.get("original_response"),
             )
         async for chunk in response:
+            _add_reasoning_alias(chunk)
             usage = getattr(chunk, "usage", None)
             if details and isinstance(usage, Usage):
                 # Fill only missing fields: an upstream fix should take priority.

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -34,6 +35,24 @@ KV_USAGE_METRICS = (
 PREEMPTION_METRICS = (
     "sglang:num_preemptions_total",
     "vllm:num_preemptions_total",
+)
+ITL_SUM_METRICS = (
+    "vllm:inter_token_latency_seconds_sum",
+)
+ITL_COUNT_METRICS = (
+    "vllm:inter_token_latency_seconds_count",
+)
+TTFT_SUM_METRICS = (
+    "vllm:time_to_first_token_seconds_sum",
+)
+TTFT_COUNT_METRICS = (
+    "vllm:time_to_first_token_seconds_count",
+)
+PREFILL_SUM_METRICS = (
+    "vllm:request_prefill_time_seconds_sum",
+)
+PREFILL_COUNT_METRICS = (
+    "vllm:request_prefill_time_seconds_count",
 )
 
 # Headers the proxy generates itself or that are connection-scoped. Echoing
@@ -111,8 +130,12 @@ class EngineClient(EngineHealthSource):
         self._extra_headers = extra_headers or {}
         self._snapshot_ttl = snapshot_ttl
         self._lock = threading.Lock()
+        self._refresh_lock = threading.Lock()
         self._last_preemptions: float | None = None
         self._last_preemption_at: float | None = None
+        self._latency_counters: dict[
+            str, tuple[float, float, float | None, float]
+        ] = {}
         self._cached_snapshot: EngineSnapshot | None = None
         self._cached_at: float = 0.0
 
@@ -152,19 +175,66 @@ class EngineClient(EngineHealthSource):
         request. The preemption figure is a true per-minute rate, not a
         per-request delta.
         """
+        return self._snapshot_with_ttl(self._snapshot_ttl)
+
+    def refresh_snapshot(self) -> EngineSnapshot:
+        """Reconcile a stale gauge without a scrape per waiting request."""
+        return self._snapshot_with_ttl(min(self._snapshot_ttl, .25))
+
+    def _rolling_mean(
+        self,
+        name: str,
+        metrics: dict[str, float],
+        sum_metrics: tuple[str, ...],
+        count_metrics: tuple[str, ...],
+        now: float,
+    ) -> float | None:
+        total = _first(metrics, sum_metrics)
+        count = _first(metrics, count_metrics)
+        previous = self._latency_counters.get(name)
+        mean = previous[2] if previous is not None else None
+        if total is None or count is None:
+            return (
+                mean if previous is not None and now - previous[3] <= 10 else None
+            )
+        sampled_at = previous[3] if previous is not None else now
+        if previous is not None and count > previous[1]:
+            sample = max(0.0, total - previous[0]) / (count - previous[1])
+            mean = sample if mean is None else .5 * sample + .5 * mean
+            sampled_at = now
+        elif previous is not None and now - sampled_at > 10:
+            mean = None
+        self._latency_counters[name] = (total, count, mean, sampled_at)
+        return mean
+
+    def _snapshot_with_ttl(self, ttl: float) -> EngineSnapshot:
         now = time.monotonic()
         with self._lock:
             if (
                 self._cached_snapshot is not None
-                and now - self._cached_at < self._snapshot_ttl
+                and now - self._cached_at < ttl
             ):
                 return self._cached_snapshot
 
+        # Ordinary cache hits do not wait for a reconciliation scrape. Cache
+        # misses are single-flight, including expiry bursts and queued retries.
+        with self._refresh_lock:
+            now = time.monotonic()
+            with self._lock:
+                if self._cached_snapshot is not None and now - self._cached_at < ttl:
+                    return self._cached_snapshot
+            return self._read_snapshot(now)
+
+    def _read_snapshot(self, now: float) -> EngineSnapshot:
         conn = self._connect(HEALTH_TIMEOUT_SECONDS)
         try:
             conn.request("GET", "/metrics")
             response = conn.getresponse()
-            metrics = parse_prometheus(response.read().decode("utf-8", "replace"))
+            if not 200 <= response.status < 300:
+                raise OSError(f"engine metrics returned HTTP {response.status}")
+            text = response.read().decode("utf-8", "replace")
+            metrics = parse_prometheus(text)
+            capacities = [int(value) for value in re.findall(r'kv_cache_size_tokens="(\d+)"', text)]
         finally:
             conn.close()
 
@@ -178,15 +248,31 @@ class EngineClient(EngineHealthSource):
                 self._last_preemptions = preemptions_total
                 self._last_preemption_at = now
 
+            mean_itl = self._rolling_mean(
+                "itl", metrics, ITL_SUM_METRICS, ITL_COUNT_METRICS, now
+            )
+            mean_ttft = self._rolling_mean(
+                "ttft", metrics, TTFT_SUM_METRICS, TTFT_COUNT_METRICS, now
+            )
+            mean_prefill = self._rolling_mean(
+                "prefill", metrics, PREFILL_SUM_METRICS, PREFILL_COUNT_METRICS, now
+            )
+
             kv = _first(metrics, KV_USAGE_METRICS)
             snapshot = EngineSnapshot(
                 kv_usage=kv if kv is not None else 0.0,
                 running=int(_first(metrics, RUNNING_METRICS) or 0),
                 waiting=int(_first(metrics, WAITING_METRICS) or 0),
                 preemptions_per_minute=rate,
+                kv_capacity_tokens=min(capacities) if capacities else None,
+                cache_epoch=metrics.get("process_start_time_seconds", metrics.get("vllm:request_success_created")),
+                sampled_at=time.monotonic(),
+                mean_itl_seconds=mean_itl,
+                mean_ttft_seconds=mean_ttft,
+                mean_prefill_seconds=mean_prefill,
             )
             self._cached_snapshot = snapshot
-            self._cached_at = now
+            self._cached_at = snapshot.sampled_at
         return snapshot
 
     def proxy(self, path: str, payload: dict, stream: bool) -> ProxyResponse:
