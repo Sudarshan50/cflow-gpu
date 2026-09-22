@@ -25,6 +25,7 @@ class AdmissionLimits:
     max_queued_tokens: int = 2_097_152
     max_queued_bytes: int = 64 * 1024 * 1024
     poll_seconds: float = .2
+    fairness_age_seconds: float = 5.0
 
     def __post_init__(self):
         if not math.isfinite(self.wait_seconds) or not 0 <= self.wait_seconds <= 60:
@@ -33,6 +34,8 @@ class AdmissionLimits:
             raise ValueError("Admission queue limits must be positive")
         if not math.isfinite(self.poll_seconds) or not 0 < self.poll_seconds <= 1:
             raise ValueError("Admission poll interval must be between zero and one second")
+        if not math.isfinite(self.fairness_age_seconds) or self.fairness_age_seconds <= 0:
+            raise ValueError("Admission fairness age must be positive")
 
 
 @dataclass(eq=False)
@@ -80,6 +83,7 @@ class AdmissionController:
         self._tokens += charge
         self._bytes += body_bytes
         self._counters["queued_total"] += 1
+        self.policy.set_queued_demand(len(self._waiting))
         return ticket, ""
 
     def _remove(self, ticket):
@@ -94,6 +98,16 @@ class AdmissionController:
             self._per_customer[ticket.customer] = count
         else:
             del self._per_customer[ticket.customer]
+        self.policy.set_queued_demand(len(self._waiting))
+
+    def _aged_waiter(self):
+        """After bounded aging, reserve the next opportunity across all lanes."""
+        if not self.policy.throughput_first or not self._waiting:
+            return None
+        oldest = min(self._waiting, key=lambda ticket: ticket.started)
+        if time.monotonic() - oldest.started >= self.limits.fairness_age_seconds:
+            return oldest
+        return None
 
     def _finish(self, decision, ticket, reason):
         waited = max(0.0, time.monotonic() - ticket.started) if ticket else 0.0
@@ -128,6 +142,7 @@ class AdmissionController:
     def acquire(
         self, envelope: RequestEnvelope, reserved_prompt_tokens: int | None = None,
         *, body_bytes: int = 0, cancelled: Callable[[], bool] | None = None,
+        deadline: float | None = None,
     ) -> Decision:
         wait_seconds = self.policy.admission_wait_seconds(self.limits.wait_seconds)
         if wait_seconds == 0:
@@ -135,6 +150,10 @@ class AdmissionController:
         if body_bytes < 0:
             raise ValueError("Request byte count cannot be negative")
         started = time.monotonic()
+        deadline = min(deadline, started + wait_seconds) if deadline is not None else started + wait_seconds
+        if deadline <= started:
+            return self._finish(self.policy.admission_rejection(envelope, "admission deadline exceeded"),
+                                None, "queue_timeout")
         lane, charge = self.policy.admission_shape(envelope, reserved_prompt_tokens)
         if lane is None:  # invalid input or off-box routing never waits locally
             return self.policy.decide(envelope, reserved_prompt_tokens)
@@ -145,43 +164,38 @@ class AdmissionController:
         ticket = None
         full_reason = ""
         with self._cv:
-            fast = lane not in self._probing and not any(t.lane == lane for t in self._waiting)
-            if fast:
-                self._probing.add(lane)
-            else:
+            # Every arrival gets one real, thread-safe reservation attempt
+            # unless an older waiter already owns lane priority. A concurrent
+            # probe is not evidence of saturation and must not consume queue
+            # capacity by itself.
+            fast = not any(t.lane == lane for t in self._waiting) and self._aged_waiter() is None
+            if not fast:
                 ticket, full_reason = self._enqueue(lane, envelope, charge, body_bytes, started)
 
         last = self.policy.admission_rejection(envelope, "waiting for admission capacity")
         if fast:
-            try:
-                last = self.policy.decide(envelope, reserved_prompt_tokens)
-                if last.admitted and self._disconnected(cancelled):
-                    self.policy.release(last)
-                    last = self.policy.admission_rejection(envelope, "client disconnected before admission")
-                    return self._finish(last, None, "client_disconnected")
-                if last.admitted or not self.policy.can_wait(last, reserved_prompt_tokens):
-                    return last
-                with self._cv:
-                    ticket, full_reason = self._enqueue(lane, envelope, charge, body_bytes, started)
-            finally:
-                with self._cv:
-                    self._probing.discard(lane)
-                    self._cv.notify_all()
+            last = self.policy.decide(envelope, reserved_prompt_tokens)
+            disconnected = last.admitted and self._disconnected(cancelled)
+            expired = last.admitted and time.monotonic() >= deadline
+            if disconnected or expired:
+                self.policy.release(last)
+                last = self.policy.admission_rejection(envelope, "client disconnected before admission"
+                                                       if disconnected else "admission deadline exceeded")
+                return self._finish(last, None, "client_disconnected" if disconnected else "queue_timeout")
+            if last.admitted or not self.policy.can_wait(last, reserved_prompt_tokens):
+                return last
+            with self._cv:
+                ticket, full_reason = self._enqueue(lane, envelope, charge, body_bytes, started)
 
         if full_reason:
             rejected = self.policy.admission_rejection(envelope, "admission queue: " + full_reason)
             return self._finish(rejected, None, full_reason)
 
         assert ticket is not None
-        deadline = started + wait_seconds
         try:
             while True:
-                # Pressure can shorten an existing wait, but recovery cannot
-                # silently extend the deadline promised when it was enqueued.
-                deadline = min(
-                    deadline,
-                    started + self.policy.admission_wait_seconds(self.limits.wait_seconds),
-                )
+                # Admission deadlines stay fixed. Throughput-mode pressure
+                # reduces execution starts, not the buffering budget.
                 if self._disconnected(cancelled):
                     rejected = self.policy.admission_rejection(envelope, "client disconnected before admission")
                     return self._finish(rejected, ticket, "client_disconnected")
@@ -190,7 +204,8 @@ class AdmissionController:
                     return self._finish(last, ticket, "queue_timeout")
                 with self._cv:
                     first = next(t for t in self._waiting if t.lane == lane)
-                    if first is not ticket or lane in self._probing:
+                    aged = self._aged_waiter()
+                    if first is not ticket or lane in self._probing or (aged is not None and aged is not ticket):
                         self._cv.wait(min(self.limits.poll_seconds, remaining))
                         continue
                     self._probing.add(lane)
@@ -221,8 +236,10 @@ class AdmissionController:
                 self._remove(ticket)
                 self._cv.notify_all()
 
-    def release(self, decision: Decision) -> None:
-        self.policy.release(decision)
+    def release(
+        self, decision: Decision, actual_output_tokens: int | None = None
+    ) -> None:
+        self.policy.release(decision, actual_output_tokens)
         with self._cv:
             self._cv.notify_all()
 

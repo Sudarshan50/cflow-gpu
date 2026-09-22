@@ -35,7 +35,15 @@ def provenance(label):
     inspected = json.loads(subprocess.check_output(["docker", "inspect", "k3"], text=True))[0]
     cmd = inspected["Config"]["Cmd"]
     config_name = Path(cmd[cmd.index("--config") + 1]).name
-    expected = "config-dspark.yaml" if label == "optimized-dspark" else "config-base.yaml"
+    expected = {
+        "optimized-base": "config-base.yaml",
+        "optimized-dspark": "config-dspark.yaml",
+        "optimized-batch8192": "config-batch8192.yaml",
+        "optimized-longprefill3072": "config-longprefill3072.yaml",
+        "optimized-aiter-gemm": "config-base.yaml",
+    }.get(label)
+    if label.startswith("optimized-") and expected is None:
+        raise RuntimeError(f"Unknown optimized qualification label: {label}")
     if label.startswith("optimized-") and config_name != expected:
         raise RuntimeError("Running profile does not match qualification label")
     path = Path("/scratch/deploy-state/amd-optimized") / config_name
@@ -44,9 +52,18 @@ def provenance(label):
     config = yaml.safe_load(path.read_text())
     env = dict(v.split("=", 1) for v in inspected["Config"]["Env"] if "=" in v)
     tuning = {k: v for k,v in env.items() if k.startswith(("VLLM_", "AITER_", "KIMI_K3_", "HIP_", "HSA_", "SAFETENSORS_")) and k != "AITER_JIT_DIR"}
+    overlay = env.get("AITER_CONFIG_GEMM_BF16")
+    overlay_sha256 = None
+    if overlay:
+        overlay_path = Path(overlay.replace("/trial/", "/scratch/deploy-state/amd-optimized/", 1))
+        if not overlay_path.is_file():
+            raise RuntimeError(f"Configured AITER GEMM table is missing: {overlay_path}")
+        overlay_sha256 = hashlib.sha256(overlay_path.read_bytes()).hexdigest()
     return {"container_id": inspected["Id"], "image": inspected["Config"]["Image"],
+            "image_id": inspected["Image"],
             "target": cmd[cmd.index("serve")+1], "config": config,
             "tuning_env_sha256": hashlib.sha256(json.dumps(tuning, sort_keys=True).encode()).hexdigest(),
+            "aiter_gemm_table_sha256": overlay_sha256,
             "workload_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             "workload_version": "balanced-cycles-v2"}
 

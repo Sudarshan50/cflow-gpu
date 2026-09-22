@@ -51,8 +51,10 @@ class AdaptiveCapacityController:
         self.engine = engine
         self.limits = limits
         self._lock = threading.Lock()
+        self._changed = threading.Condition(self._lock)
         self._snapshot: EngineSnapshot | None = None
         self._sampled_at = 0.0
+        self._generation = 0
         self._borrow_limit = 0
         self._state = "cold"
         self._samples = 0
@@ -85,21 +87,22 @@ class AdaptiveCapacityController:
         return value is not None and value > threshold
 
     def _target(self, snapshot: EngineSnapshot) -> tuple[str, int]:
+        active = snapshot.running > 0 or snapshot.waiting > 0
         pressure = (
             snapshot.waiting > 0
             or snapshot.preemptions_per_minute > 0
             or snapshot.kv_usage >= self.limits.stop_kv
-            or self._above(snapshot.mean_itl_seconds, self.limits.stop_itl)
-            or self._above(snapshot.mean_ttft_seconds, self.limits.stop_ttft)
-            or self._above(snapshot.mean_prefill_seconds, self.limits.stop_prefill)
+            or active and self._above(snapshot.mean_itl_seconds, self.limits.stop_itl)
+            or active and self._above(snapshot.mean_ttft_seconds, self.limits.stop_ttft)
+            or active and self._above(snapshot.mean_prefill_seconds, self.limits.stop_prefill)
         )
         if pressure:
             return "pressure", 0
         warm = (
             snapshot.kv_usage > self.limits.green_kv
-            or self._above(snapshot.mean_itl_seconds, self.limits.green_itl)
-            or self._above(snapshot.mean_ttft_seconds, self.limits.green_ttft)
-            or self._above(snapshot.mean_prefill_seconds, self.limits.green_prefill)
+            or active and self._above(snapshot.mean_itl_seconds, self.limits.green_itl)
+            or active and self._above(snapshot.mean_ttft_seconds, self.limits.green_ttft)
+            or active and self._above(snapshot.mean_prefill_seconds, self.limits.green_prefill)
         )
         if warm:
             return "warm", min(24, self.limits.max_borrow_requests)
@@ -110,12 +113,14 @@ class AdaptiveCapacityController:
             snapshot = self.engine.refresh_snapshot()
             state, target = self._target(snapshot)
         except Exception:
-            with self._lock:
+            with self._changed:
                 self._errors += 1
                 self._state = "stale"
                 self._borrow_limit = 0
+                self._generation += 1
+                self._changed.notify_all()
             return
-        with self._lock:
+        with self._changed:
             current = self._borrow_limit
             self._borrow_limit = (
                 min(target, current + self.limits.increase_step)
@@ -125,6 +130,8 @@ class AdaptiveCapacityController:
             self._sampled_at = time.monotonic()
             self._state = state
             self._samples += 1
+            self._generation += 1
+            self._changed.notify_all()
 
     def _fresh(self) -> bool:
         return (
@@ -139,13 +146,30 @@ class AdaptiveCapacityController:
             return self._snapshot
 
     def refresh_snapshot(self) -> EngineSnapshot:
-        # Reconciliation on a request path remains non-blocking. The background
-        # loop owns all engine metrics I/O.
-        return self.snapshot()
+        # Wait for one background observation when occupancy reconciliation
+        # needs a newer gauge. The request thread never performs metrics I/O.
+        with self._changed:
+            if self._thread is None:
+                if not self._fresh():
+                    raise OSError("adaptive capacity snapshot is stale")
+                return self._snapshot
+            generation = self._generation
+            self._changed.wait_for(
+                lambda: self._generation != generation or self._stop.is_set(),
+                timeout=self.limits.poll_seconds * 1.5,
+            )
+            if not self._fresh():
+                raise OSError("adaptive capacity snapshot is stale")
+            return self._snapshot
 
     def borrow_limit(self) -> int:
         with self._lock:
             return self._borrow_limit if self._fresh() else 0
+
+    def allows_burst(self) -> bool:
+        """Only the fully healthy state can expand expensive output work."""
+        with self._lock:
+            return self._fresh() and self._state == "green"
 
     def queue_wait_seconds(self, configured: float) -> float:
         with self._lock:

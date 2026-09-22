@@ -30,7 +30,9 @@ class ElasticBudgetTests(unittest.TestCase):
     def budget(self, **overrides):
         values = dict(large_context_tokens=1000, large_context_requests=4,
                       long_output_tokens=100, long_output_requests=2,
-                      reserved_tokens=5000, long_output_burst_requests=4)
+                      reserved_tokens=5000, long_output_burst_requests=4,
+                      long_output_base_token_budget=250,
+                      long_output_burst_token_budget=500)
         values.update(overrides)
         return WorkloadBudget(WorkloadLimits(**values),
                               StaticHealthSource(EngineSnapshot(0, 0, 0, 0, 10000)))
@@ -44,7 +46,7 @@ class ElasticBudgetTests(unittest.TestCase):
         with concurrent.futures.ThreadPoolExecutor(max_workers=24) as pool:
             leases = list(pool.map(acquire, range(24)))
         self.assertEqual(sum(lease is not None for lease in leases), 4)
-        self.assertEqual(budget.state()["reserved_tokens"], 1200)
+        self.assertEqual(budget.state()["reserved_tokens"], 900)
         self.assertEqual(budget.state()["burst_admissions_total"], 2)
         for lease in leases:
             if lease is not None:
@@ -55,7 +57,7 @@ class ElasticBudgetTests(unittest.TestCase):
         budget = self.budget()
         leases = [budget.acquire(100, 200)[0] for _ in range(3)]
         budget.health_source = StaticHealthSource(EngineSnapshot(.60, 0, 0, 0, 10000))
-        self.assertEqual(budget.acquire(100, 200)[1], "long_output_slots")
+        self.assertEqual(budget.acquire(100, 200)[1], "long_output_budget")
         self.assertEqual(budget.state()["active_requests"], 3)
         budget.release(leases.pop())
         self.assertIsNone(budget.acquire(100, 200)[0])
@@ -68,7 +70,7 @@ class ElasticBudgetTests(unittest.TestCase):
                 budget = self.budget()
                 self.assertIsNotNone(budget.acquire(prompt, 200, images)[0])
                 self.assertIsNotNone(budget.acquire(prompt, 200, images)[0])
-                self.assertEqual(budget.acquire(prompt, 200, images)[1], "long_output_slots")
+                self.assertEqual(budget.acquire(prompt, 200, images)[1], "long_output_budget")
 
     def test_burst_needs_known_capacity_no_queue_and_no_preemptions(self):
         for snapshot in (
@@ -90,7 +92,7 @@ class ElasticBudgetTests(unittest.TestCase):
         budget.health_source = StaticHealthSource(EngineSnapshot(0, 0, 0, 0, 1000000))
         self.assertIsNotNone(budget.acquire(50000, 200)[0])
         self.assertIsNotNone(budget.acquire(50000, 200)[0])
-        self.assertEqual(budget.acquire(50000, 200)[1], "long_output_slots")
+        self.assertEqual(budget.acquire(50000, 200)[1], "long_output_budget")
 
     def test_no_extra_capacity_when_health_is_unavailable(self):
         class Broken:
@@ -100,7 +102,7 @@ class ElasticBudgetTests(unittest.TestCase):
         budget.health_source = Broken()
         self.assertIsNotNone(budget.acquire(100, 200)[0])
         self.assertIsNotNone(budget.acquire(100, 200)[0])
-        self.assertEqual(budget.acquire(100, 200)[1], "long_output_slots")
+        self.assertEqual(budget.acquire(100, 200)[1], "long_output_budget")
 
     def test_token_budget_and_kv_limit_remain_hard_bounds(self):
         budget = self.budget(reserved_tokens=650)
@@ -111,6 +113,125 @@ class ElasticBudgetTests(unittest.TestCase):
         budget.health_source = StaticHealthSource(EngineSnapshot(.84, 0, 0, 0, 10000))
         self.assertEqual(budget.acquire(100, 200)[1], "kv_headroom")
 
+    def test_long_output_budget_is_token_weighted_and_conserved(self):
+        budget = self.budget(
+            long_output_tokens=2048,
+            long_output_requests=2,
+            long_output_burst_requests=8,
+            long_output_base_token_budget=8192,
+            long_output_burst_token_budget=32768,
+            reserved_tokens=100000,
+            output_safety_factor=4,
+        )
+        budget.health_source = StaticHealthSource(EngineSnapshot(0, 0, 0, 0, 1000000))
+        leases = [budget.acquire(100, 8192)[0] for _ in range(4)]
+        self.assertTrue(all(lease is not None for lease in leases))
+        self.assertEqual(budget.acquire(100, 8192)[1], "long_output_budget")
+        self.assertEqual(budget.state()["long_output_reserved_tokens"], 32768)
+        self.assertTrue(budget.release(leases.pop()))
+        self.assertEqual(budget.state()["long_output_reserved_tokens"], 24576)
+        self.assertIsNotNone(budget.acquire(100, 8192)[0])
+
+    def test_one_valid_output_larger_than_base_budget_can_still_run(self):
+        budget = self.budget(
+            long_output_tokens=2048,
+            long_output_requests=2,
+            long_output_burst_requests=2,
+            long_output_base_token_budget=8192,
+            long_output_burst_token_budget=8192,
+            reserved_tokens=100000,
+            output_safety_factor=4,
+        )
+        budget.health_source = StaticHealthSource(EngineSnapshot(0, 0, 0, 0, 1000000))
+        self.assertIsNotNone(budget.acquire(100, 16000)[0])
+        self.assertEqual(budget.acquire(100, 16000)[1], "long_output_budget")
+
+    def test_3000_token_requests_are_bounded_by_tokens_not_fixed_slots(self):
+        budget = self.budget(
+            long_output_tokens=2048,
+            long_output_requests=2,
+            long_output_burst_requests=8,
+            long_output_burst_running_limit=32,
+            long_output_base_token_budget=8192,
+            long_output_burst_token_budget=32768,
+            reserved_tokens=100000,
+        )
+        budget.health_source = StaticHealthSource(EngineSnapshot(0, 0, 0, 0, 1000000))
+        # The deprecated request-count value is eight, but the 32K weighted
+        # budget safely admits twelve cold-start 2,560-token reservations.
+        leases = [budget.acquire(100, 3000)[0] for _ in range(12)]
+        self.assertTrue(all(lease is not None for lease in leases))
+        self.assertEqual(budget.acquire(100, 3000)[1], "long_output_budget")
+        for lease in leases:
+            budget.release(lease)
+        budget.health_source = StaticHealthSource(EngineSnapshot(.60, 0, 0, 0, 1000000))
+        self.assertIsNotNone(budget.acquire(100, 3000)[0])
+        self.assertIsNotNone(budget.acquire(100, 3000)[0])
+        self.assertIsNotNone(budget.acquire(100, 3000)[0])
+        self.assertEqual(budget.acquire(100, 3000)[1], "long_output_budget")
+
+    def test_completed_outputs_adapt_future_reservations_by_class(self):
+        budget = self.budget(
+            long_output_tokens=2048,
+            long_output_requests=16,
+            long_output_burst_requests=16,
+            long_output_base_token_budget=65536,
+            long_output_burst_token_budget=65536,
+            reserved_tokens=100000,
+            output_min_samples=3,
+        )
+        budget.health_source = StaticHealthSource(EngineSnapshot(0, 0, 0, 0, 1000000))
+        for actual in (400, 500, 600):
+            lease, _ = budget.acquire(100, 4096, class_name="P1-short-chat")
+            self.assertTrue(budget.release(lease, actual))
+        lease, _ = budget.acquire(100, 4096, class_name="P1-short-chat")
+        self.assertEqual(budget.state()["long_output_last_prediction"], 750)
+        budget.release(lease)
+
+        # A different class cold-starts from the configured long-output
+        # threshold rather than borrowing another class's completion shape.
+        lease, _ = budget.acquire(100, 4096, class_name="P0-interactive")
+        self.assertEqual(budget.state()["long_output_last_prediction"], 2560)
+        budget.release(lease)
+
+    def test_staged_profile_admits_sixteen_4096_grants_only_when_healthy(self):
+        budget = self.budget(
+            long_output_tokens=2048,
+            long_output_requests=4,
+            long_output_burst_requests=16,
+            long_output_burst_running_limit=16,
+            long_output_base_token_budget=12288,
+            long_output_burst_token_budget=49152,
+            reserved_tokens=1000000,
+        )
+        budget.health_source = StaticHealthSource(
+            EngineSnapshot(0, 0, 0, 0, 1000000)
+        )
+        leases = [
+            budget.acquire(100, 4096, class_name="P1-short-chat")[0]
+            for _ in range(16)
+        ]
+        self.assertTrue(all(lease is not None for lease in leases))
+        self.assertEqual(
+            budget.acquire(100, 4096, class_name="P1-short-chat")[1],
+            "long_output_budget",
+        )
+        for lease in leases:
+            budget.release(lease, 800)
+
+        budget.health_source = StaticHealthSource(
+            EngineSnapshot(.60, 0, 0, 0, 1000000)
+        )
+        pressured = [
+            budget.acquire(100, 4096, class_name="P1-short-chat")[0]
+            for _ in range(12)
+        ]
+        self.assertTrue(all(lease is not None for lease in pressured))
+        self.assertEqual(
+            budget.acquire(100, 4096, class_name="P1-short-chat")[1],
+            "long_output_budget",
+        )
+
     def test_queue_tolerance_is_bounded_and_does_not_grant_burst_slots(self):
         budget = self.budget(engine_queue_tolerance=2)
         budget.acquire(10, 10)
@@ -118,7 +239,7 @@ class ElasticBudgetTests(unittest.TestCase):
         budget.health_source = StaticHealthSource(EngineSnapshot(.1, 0, 2, 0, 10000))
         self.assertIsNotNone(budget.acquire(100, 200)[0])
         self.assertIsNotNone(budget.acquire(100, 200)[0])
-        self.assertEqual(budget.acquire(100, 200)[1], "long_output_slots")
+        self.assertEqual(budget.acquire(100, 200)[1], "long_output_budget")
         budget = self.budget(engine_queue_tolerance=2)
         budget.health_source = StaticHealthSource(EngineSnapshot(.1, 0, 3, 0, 10000))
         self.assertEqual(budget.acquire(100, 200)[1], "engine_queue")
@@ -191,13 +312,13 @@ class ElasticBudgetTests(unittest.TestCase):
         policy = build_default(262144, 64)
         policy.workload_budget = WorkloadBudget(
             WorkloadLimits(
-                large_context_tokens=1000, long_output_tokens=1000,
+                large_context_tokens=1000, long_output_tokens=2000,
                 reserved_tokens=100000, adaptive_borrow_requests=32,
             ),
             StaticHealthSource(EngineSnapshot(0, 0, 0, 0, 100000)),
         )
         decisions = [
-            policy.decide(RequestEnvelope("pool", 50, 20))
+            policy.decide(RequestEnvelope("pool", 50, 1_000))
             for _ in range(33)
         ]
         self.assertEqual(sum(d.admitted for d in decisions), 32)
@@ -213,7 +334,9 @@ class AdmissionTests(unittest.TestCase):
         policy = build_default(262144, 64)
         policy.workload_budget = WorkloadBudget(
             WorkloadLimits(large_context_tokens=1000, long_output_tokens=100,
-                           long_output_requests=1, reserved_tokens=5000),
+                           long_output_requests=1, reserved_tokens=5000,
+                           long_output_base_token_budget=125,
+                           long_output_burst_token_budget=125),
             StaticHealthSource(EngineSnapshot(0, 0, 0, 0, 10000)),
         )
         values = dict(wait_seconds=2, poll_seconds=.01)
@@ -229,7 +352,7 @@ class AdmissionTests(unittest.TestCase):
         with concurrent.futures.ThreadPoolExecutor() as pool:
             pending = pool.submit(controller.acquire, self.request())
             wait_for(lambda: controller.state()["queued_requests"] == 1)
-            self.assertEqual(controller.policy.workload_budget.state()["reserved_tokens"], 250)
+            self.assertEqual(controller.policy.workload_budget.state()["reserved_tokens"], 175)
             self.assertEqual(controller.state()["queued_tokens"], 250)
             controller.release(held)
             admitted = pending.result(timeout=2)
@@ -240,6 +363,66 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(controller.state()["queued_tokens"], 0)
         self.assertEqual(controller.policy.workload_budget.state()["reserved_tokens"], 0)
         self.assertEqual(controller.state()["queued_admitted_total"], 1)
+
+    def test_concurrent_probe_uses_available_capacity_before_queueing(self):
+        controller = self.controller(max_waiters=1)
+        controller.policy.workload_budget = WorkloadBudget(
+            WorkloadLimits(
+                large_context_tokens=1000,
+                long_output_tokens=100,
+                long_output_requests=2,
+                reserved_tokens=5000,
+                long_output_base_token_budget=250,
+                long_output_burst_token_budget=250,
+            ),
+            StaticHealthSource(EngineSnapshot(0, 0, 0, 0, 10000)),
+        )
+        original = controller.policy.decide
+        entered = threading.Event()
+        proceed = threading.Event()
+        calls = 0
+        call_lock = threading.Lock()
+
+        def delayed(*args, **kwargs):
+            nonlocal calls
+            with call_lock:
+                calls += 1
+                first = calls == 1
+            if first:
+                entered.set()
+                proceed.wait(1)
+            return original(*args, **kwargs)
+
+        with patch.object(controller.policy, "decide", side_effect=delayed):
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                first = pool.submit(controller.acquire, self.request("first"))
+                self.assertTrue(entered.wait(1))
+                second = controller.acquire(self.request("second"))
+                self.assertTrue(second.admitted)
+                self.assertFalse(second.admission_queued)
+                controller.release(second)
+                proceed.set()
+                first_decision = first.result(timeout=1)
+        self.assertTrue(first_decision.admitted)
+        controller.release(first_decision)
+
+    def test_pressure_does_not_shorten_an_existing_waiters_deadline(self):
+        controller = self.controller(wait_seconds=.3)
+        held = controller.acquire(self.request())
+        pressured = threading.Event()
+        controller.policy.admission_wait_seconds = (
+            lambda configured: 0.0 if pressured.is_set() else configured
+        )
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            pending = pool.submit(controller.acquire, self.request("waiting"))
+            wait_for(lambda: controller.state()["queued_requests"] == 1)
+            pressured.set()
+            time.sleep(.03)
+            controller.release(held)
+            admitted = pending.result(timeout=1)
+        self.assertTrue(admitted.admitted)
+        self.assertTrue(admitted.admission_queued)
+        controller.release(admitted)
 
     def test_fifo_prevents_new_arrivals_stealing_a_waiting_lane(self):
         controller = self.controller()
@@ -423,8 +606,8 @@ class HttpAdmissionTests(unittest.TestCase):
             first = pool.submit(self.post, "large")
             self.assertTrue(self.started.wait(2))
             code, body, headers = self.post("large")
-            self.assertEqual(code, 503)
-            self.assertEqual(body["error"]["type"], "service_unavailable")
+            self.assertEqual(code, 429)
+            self.assertEqual(body["error"]["type"], "rate_limit_error")
             self.assertEqual(body["error"]["code"], "queue_timeout")
             self.assertIn("large_context_slots", body["error"]["message"])
             self.assertIn("Retry-After", headers)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import unittest
 from unittest.mock import patch
 
@@ -70,6 +71,41 @@ class MediaNormalizeTest(unittest.TestCase):
         self.assertEqual(parts[3]["text"], "[video frame 2/2 at 00:00:02.500]")
         self.assertEqual(parts[4]["type"], "image_url")
         frames.assert_called_once_with(b"video bytes")
+
+    @patch("redesign.gateway.media._video_frames")
+    def test_video_inlined_as_text_is_decoded_not_billed_as_text(self, frames):
+        frames.return_value = [(base64.b64decode(PNG_B64), 0.0)]
+        blob = b"v" * 50_000
+        video = base64.b64encode(blob).decode()
+        payload = {
+            "messages": [{
+                "role": "user",
+                "content": f"describe this data:video/mp4;base64,{video}",
+            }],
+        }
+        from redesign.gateway.tokens import HeuristicEstimator
+
+        self.assertGreater(HeuristicEstimator().estimate(payload), 10_000)
+        out = normalize_payload(payload)
+        content = out["messages"][0]["content"]
+        self.assertEqual(content[0], {"type": "text", "text": "describe this"})
+        self.assertEqual(content[2]["type"], "image_url")
+        self.assertLess(HeuristicEstimator().estimate(out), 20_000)
+        frames.assert_called_once_with(blob)
+
+    @patch("redesign.gateway.media._video_frames")
+    def test_json_string_content_and_mislabeled_mp4_are_video(self, frames):
+        frames.return_value = [(base64.b64decode(PNG_B64), 1.0)]
+        video = base64.b64encode(b"\x00\x00\x00\x18ftypmp42" + b"x" * 16).decode()
+        payload = {"messages": [{"role": "user", "content": json.dumps([
+            {"type": "text", "text": "clip"},
+            {"type": "image_url", "image_url": {"url": f"data:application/octet-stream;base64,{video}"}},
+        ])}]}
+        out = normalize_payload(payload)
+        content = out["messages"][0]["content"]
+        self.assertEqual(content[0]["text"], "clip")
+        self.assertEqual(content[2]["type"], "image_url")
+        frames.assert_called_once()
 
     @patch("redesign.gateway.media._video_frames", return_value=[])
     def test_unreadable_video_becomes_a_text_note(self, _frames):
@@ -174,3 +210,30 @@ class MediaNormalizeTest(unittest.TestCase):
             "image_url": {"url": url},
         }))
         self.assertEqual(out["messages"][0]["content"][1]["image_url"]["url"], url)
+
+    def test_allowed_tools_choice_becomes_chat_tool_choice(self):
+        out = normalize_payload({
+            "tool_choice": {"type": "allowed_tools", "mode": "auto", "tools": ["get_weather"]},
+            "tools": [
+                {"type": "function", "function": {"name": "get_weather"}},
+                {"type": "function", "function": {"name": "get_time"}},
+            ],
+        })
+        self.assertEqual(out["tool_choice"], "auto")
+        self.assertEqual([tool["function"]["name"] for tool in out["tools"]], ["get_weather"])
+
+    def test_required_allowed_tool_becomes_a_named_function(self):
+        out = normalize_payload({
+            "tool_choice": {
+                "type": "allowed_tools",
+                "allowed_tools": {
+                    "mode": "required",
+                    "tools": [{"type": "function", "function": {"name": "get_weather"}}],
+                },
+            },
+        })
+        self.assertEqual(out["tool_choice"], {"type": "function", "function": {"name": "get_weather"}})
+
+    def test_numeric_message_content_becomes_text(self):
+        out = normalize_payload({"messages": [{"role": "user", "content": 512}]})
+        self.assertEqual(out["messages"][0]["content"], "512")

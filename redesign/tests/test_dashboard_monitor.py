@@ -61,13 +61,17 @@ class GatewayViewTest(unittest.TestCase):
         }
         latency = {
             dash._metric_key(
-                "k3_gateway_ttft_seconds",
+                "k3_gateway_ttft_live_seconds",
                 {"class": "P2-agentic", "quantile": "0.95"},
             ): 2.5,
             dash._metric_key(
-                "k3_gateway_ttft_seconds_count",
+                "k3_gateway_ttft_live_seconds_count",
                 {"class": "P2-agentic"},
             ): admitted,
+            dash._metric_key(
+                "k3_gateway_ttft_seconds",
+                {"class": "P2-agentic", "quantile": "0.95"},
+            ): 80.0,
         }
         return {"ts": ts, "counters": counters, "gauges": gauges, "latency": latency}
 
@@ -85,6 +89,23 @@ class GatewayViewTest(unittest.TestCase):
         self.assertEqual(view["recent"]["admission"]["timeouts"], 2)
         self.assertEqual(view["recent"]["rejection_reasons"][0]["value"], 3)
         self.assertEqual(view["current"]["latency"][0]["ttft_p95"], 2.5)
+        self.assertNotIn(80.0, [row.get("ttft_p95") for row in view["current"]["latency"]])
+        self.assertFalse(view["recent"]["partial"])
+
+    def test_recent_deltas_follow_the_last_minute_not_older_samples(self):
+        now = time.time()
+        monitor = dash.GatewayMonitor("http://example.invalid/metrics")
+        monitor.samples.extend([
+            self.sample(now - 180, 10, 1, 0, 0),
+            self.sample(now - 60, 40, 9, 4, 0),
+            self.sample(now, 44, 10, 4, 1),
+        ])
+        monitor.state = "up"
+        monitor.last_success = now
+        view = monitor.view()
+        self.assertEqual(view["recent"]["rejection_reasons"][0]["value"], 1)
+        self.assertEqual(view["recent"]["admission"]["timeouts"], 0)
+        self.assertAlmostEqual(view["recent"]["seconds"], 60, delta=1)
         self.assertFalse(view["recent"]["partial"])
 
     def test_stale_gateway_values_are_not_presented_as_current(self):
@@ -104,6 +125,9 @@ class HtmlContractTest(unittest.TestCase):
         html = HTML.read_text()
         for hook in (
             'id="sourceBar"',
+            'id="admissionNotice"',
+            'id="noticeTimeouts"',
+            'id="notice429"',
             'id="admissionKpis"',
             'id="rollupBody"',
             'id="chartTokens"',
@@ -112,10 +136,12 @@ class HtmlContractTest(unittest.TestCase):
             'id="engineKpis"',
             "fetch('/api/state'",
             "prefers-reduced-motion",
+            "renderAdmissionNotice(d)",
         ):
             self.assertIn(hook, html)
         self.assertNotIn("Peak TPM", html)
         self.assertNotIn(">sent<", html.lower())
+        self.assertNotIn("admission request(s) timed out", SERVER.read_text())
 
 
 if __name__ == "__main__":

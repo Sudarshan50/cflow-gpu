@@ -1,5 +1,10 @@
 # Adaptive Admission Control Design
 
+The production throughput-first profile deployed on 2026-09-22 is documented in
+[THROUGHPUT-ADMISSION-2026-09-22.md](THROUGHPUT-ADMISSION-2026-09-22.md). It replaces
+the legacy class/output gates and pressure-shortened waiting described below
+when `K3_THROUGHPUT_FIRST=1` is enabled.
+
 The design should use **one adaptive admission controller that coordinates concurrency, queues, and customer fairness**. It should expand when spare capacity exists and protect latency when the system is genuinely saturated.
 
 ## 1. Separate hard boundaries from adaptive limits
@@ -146,3 +151,10 @@ gateway while it had zero active and zero queued requests. The model and
 LiteLLM were not restarted. A simultaneous 20-request P1 smoke test completed
 20/20 with HTTP 200 (p50 0.68 s, p95 1.65 s, max 2.37 s), with no engine queue,
 preemption, gateway queue timeout, or controller scrape error afterward.
+
+The fixed long-output request-count limit was subsequently removed. Admission
+is now bounded by predicted output tokens (12,288 base; 49,152 healthy burst),
+projected KV usage, engine queue/preemptions, adaptive latency state, and the
+64-request global ceiling. Stale, warm, or pressured controller state disables
+the larger token budget. Legacy request-count settings are accepted for
+configuration compatibility but are not enforced.

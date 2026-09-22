@@ -38,10 +38,12 @@ class AdaptiveCapacityControllerTest(unittest.TestCase):
         )
         controller.sample_once()
         self.assertEqual(controller.borrow_limit(), 4)
+        self.assertTrue(controller.allows_burst())
         controller.sample_once()
         self.assertEqual(controller.borrow_limit(), 8)
         controller.sample_once()
         self.assertEqual(controller.borrow_limit(), 0)
+        self.assertFalse(controller.allows_burst())
         self.assertEqual(controller.queue_wait_seconds(3), 0)
         self.assertEqual(controller.queue_limit(16), 4)
 
@@ -52,6 +54,7 @@ class AdaptiveCapacityControllerTest(unittest.TestCase):
         )
         controller.sample_once()
         self.assertEqual(controller.borrow_limit(), 24)
+        self.assertFalse(controller.allows_burst())
         self.assertEqual(controller.queue_wait_seconds(3), 1)
         self.assertEqual(controller.queue_limit(16), 8)
 
@@ -86,6 +89,35 @@ class AdaptiveCapacityControllerTest(unittest.TestCase):
                 controller.sample_once()
                 self.assertEqual(controller.borrow_limit(), 0)
                 self.assertEqual(controller.state()["state"], "pressure")
+
+    def test_completed_latency_does_not_keep_an_idle_engine_pressured(self):
+        controller = AdaptiveCapacityController(
+            _Engine([snapshot(
+                running=0,
+                mean_itl_seconds=.5,
+                mean_ttft_seconds=20,
+                mean_prefill_seconds=30,
+            )]),
+            CapacityLimits(increase_step=32),
+        )
+        controller.sample_once()
+        self.assertEqual(controller.state()["state"], "green")
+        self.assertEqual(controller.borrow_limit(), 32)
+        self.assertTrue(controller.allows_burst())
+
+    def test_reconciliation_waits_for_a_new_background_sample(self):
+        controller = AdaptiveCapacityController(
+            _Engine([snapshot(running=1), snapshot(running=0)]),
+            CapacityLimits(
+                poll_seconds=.05, freshness_seconds=1, increase_step=32
+            ),
+        )
+        try:
+            controller.start()
+            self.assertEqual(controller.snapshot().running, 1)
+            self.assertEqual(controller.refresh_snapshot().running, 0)
+        finally:
+            controller.close()
 
 
 if __name__ == "__main__":

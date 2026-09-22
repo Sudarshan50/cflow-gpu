@@ -11,8 +11,9 @@ from dataclasses import dataclass
 
 from .models import Priority, RequestEnvelope
 
-INTERACTIVE_CEILING_TOKENS = 32_768
 SHORT_CHAT_CEILING_TOKENS = 8_192
+MEDIUM_CONTEXT_CEILING_TOKENS = 32_768
+EXPRESS_OUTPUT_CEILING_TOKENS = 512
 
 
 @dataclass(frozen=True)
@@ -25,16 +26,19 @@ class TrafficClass:
     served_off_box: bool = False
 
 
-INTERACTIVE = TrafficClass("P0-interactive", Priority.INTERACTIVE, 8_192, 3.0, 0.50)
-SHORT_CHAT = TrafficClass("P1-short-chat", Priority.SHORT_CHAT, 4_096, 1.0, 0.0,
+INTERACTIVE = TrafficClass("P0-interactive", Priority.INTERACTIVE, 512, 1.0, 0.50)
+SHORT_CHAT = TrafficClass("P1-short-chat", Priority.SHORT_CHAT, 2_048, 3.0, 0.0,
                           served_off_box=True)
-LONG_CONTEXT = TrafficClass("P2-long-context", Priority.LONG_CONTEXT, 16_384, 60.0, 0.25)
+MEDIUM_CONTEXT = TrafficClass("P2-medium-context", Priority.LONG_CONTEXT, 1_536, 15.0, 0.25)
+LONG_CONTEXT = TrafficClass("P2-long-context", Priority.LONG_CONTEXT, 1_536, 60.0, 0.25)
 BATCH = TrafficClass("P3-batch", Priority.BATCH, 32_768, None, 0.25)
 
 # Tool/vision requests use LONG_CONTEXT priority so overload protection can shed them.
-AGENTIC = TrafficClass("P2-agentic", Priority.LONG_CONTEXT, 512, 15.0, 0.45)
+# 1536 covers a high-effort think plus a short answer or tool call. It stays
+# under the 2048 long-output gate, so these turns do not take those scarce slots.
+AGENTIC = TrafficClass("P2-agentic", Priority.LONG_CONTEXT, 1536, 15.0, 0.45)
 
-ALL_CLASSES = (INTERACTIVE, SHORT_CHAT, LONG_CONTEXT, BATCH, AGENTIC)
+ALL_CLASSES = (INTERACTIVE, SHORT_CHAT, MEDIUM_CONTEXT, LONG_CONTEXT, BATCH, AGENTIC)
 
 
 class ClassRule(abc.ABC):
@@ -69,7 +73,16 @@ class ShortChatRule(ClassRule):
 
 class InteractiveRule(ClassRule):
     def matches(self, envelope: RequestEnvelope) -> bool:
-        return envelope.prompt_tokens <= INTERACTIVE_CEILING_TOKENS
+        return (
+            envelope.prompt_tokens <= SHORT_CHAT_CEILING_TOKENS
+            and envelope.requested_max_tokens is not None
+            and envelope.requested_max_tokens <= EXPRESS_OUTPUT_CEILING_TOKENS
+        )
+
+
+class MediumContextRule(ClassRule):
+    def matches(self, envelope: RequestEnvelope) -> bool:
+        return envelope.prompt_tokens <= MEDIUM_CONTEXT_CEILING_TOKENS
 
 
 class LongContextRule(ClassRule):
@@ -80,8 +93,9 @@ class LongContextRule(ClassRule):
 DEFAULT_RULES: tuple[ClassRule, ...] = (
     BatchHintRule(BATCH),
     AgenticRule(AGENTIC),
-    ShortChatRule(SHORT_CHAT),
     InteractiveRule(INTERACTIVE),
+    ShortChatRule(SHORT_CHAT),
+    MediumContextRule(MEDIUM_CONTEXT),
     LongContextRule(LONG_CONTEXT),
 )
 

@@ -80,7 +80,10 @@ def metrics(base):
 def identity(base, variant, blocks):
     def git(*args):
         return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
-    if git("rev-parse", "HEAD") != BASELINE or git("diff", BASELINE, "--", "redesign"):
+    if variant not in ("baseline", "longprefill3072", "aiter-gemm") and (
+        git("rev-parse", "HEAD") != BASELINE
+        or git("diff", BASELINE, "--", "redesign")
+    ):
         raise RuntimeError("Serving source is not the requested pre-four baseline")
     runtime = json.loads(subprocess.check_output(["docker", "inspect", "k3"], text=True))[0]
     expected = yaml.safe_load(git("show", BASELINE + ":experiments/2026-09-20-amd-optimized/config-base.yaml"))
@@ -89,8 +92,22 @@ def identity(base, variant, blocks):
         # Match the baseline's already allocated pool; this is a control, not
         # an extra memory-capacity treatment.
         expected["num-gpu-blocks-override"] = blocks
-    actual = yaml.safe_load(Path("/scratch/deploy-state/amd-optimized/config-base.yaml").read_text())
-    if actual != expected or IMAGE not in runtime["Config"]["Image"]:
+    elif variant == "longprefill3072":
+        expected["long-prefill-token-threshold"] = 3072
+    config_name = (
+        "config-longprefill3072.yaml"
+        if variant == "longprefill3072"
+        else "config-base.yaml"
+    )
+    actual = yaml.safe_load(
+        (Path("/scratch/deploy-state/amd-optimized") / config_name).read_text()
+    )
+    expected_image = (
+        "cflowx/kimi-k3-aiter-gemm:5337bf2c"
+        if variant == "aiter-gemm"
+        else IMAGE
+    )
+    if actual != expected or expected_image not in runtime["Config"]["Image"]:
         raise RuntimeError("Unexpected engine image or numerical profile")
     cache = metrics(base)["cache"]
     wanted = {"block_size": "768", "mamba_cache_mode": "align", "prefix_match_unit": "None",
@@ -339,7 +356,11 @@ def quality(base, salt):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", default="http://127.0.0.1:8001")
-    parser.add_argument("--variant", choices=("baseline", "batch2048"), required=True)
+    parser.add_argument(
+        "--variant",
+        choices=("baseline", "batch2048", "longprefill3072", "aiter-gemm"),
+        required=True,
+    )
     parser.add_argument("--cache-blocks", type=int, default=2177)
     parser.add_argument("--rounds", type=int, default=2, choices=(1, 2))
     parser.add_argument("--out", type=Path, required=True)

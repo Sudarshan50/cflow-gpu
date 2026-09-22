@@ -3,6 +3,9 @@
 
 import asyncio
 import io
+import os
+import re
+import tempfile
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from collections.abc import Sequence as GenericSequence
@@ -69,6 +72,207 @@ from vllm.utils.collection_utils import as_list
 from vllm.utils.mistral import is_mistral_tool_parser
 
 logger = init_logger(__name__)
+
+# The K3 serving adapter only registers the image modality. A video_url would
+# be rejected with "At most 0 video(s)". Sample a few frames and send those
+# images instead; the checkpoint vision tower consumes images.
+_MAX_VIDEO_FRAMES = 8
+_MAX_VIDEO_EDGE = 768
+_MAX_VIDEO_BYTES = 48 * 1024 * 1024
+_DATA_VIDEO_RE = re.compile(
+    r"data:video/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+",
+    re.IGNORECASE,
+)
+
+
+def _video_url_of(part: dict) -> str:
+    for key in ("video_url", "video", "input_video"):
+        value = part.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            url = value.get("url") or value.get("video_url")
+            if isinstance(url, str) and url.strip():
+                return url.strip()
+    url = part.get("url")
+    if isinstance(url, str):
+        return url.strip()
+    image = part.get("image_url")
+    if isinstance(image, str):
+        return image.strip()
+    if isinstance(image, dict):
+        nested = image.get("url")
+        if isinstance(nested, str):
+            return nested.strip()
+    return ""
+
+
+def _is_video_part(part: dict) -> bool:
+    kind = str(part.get("type") or "")
+    if kind in {"video_url", "video", "input_video"}:
+        return True
+    if any(key in part for key in ("video_url", "video", "input_video")):
+        return True
+    url = _video_url_of(part).lower()
+    path = url.split("?", 1)[0]
+    return url.startswith("data:video/") or path.endswith(
+        (".mp4", ".webm", ".mov", ".mkv", ".m4v")
+    )
+
+
+def _bytes_from_video_url(url: str) -> bytes | None:
+    if url.startswith("data:"):
+        payload = url.partition(",")[2]
+        if not payload:
+            return None
+        try:
+            return base64.b64decode("".join(payload.split()), validate=False)
+        except Exception:
+            return None
+    if url.startswith(("http://", "https://")):
+        from urllib.request import Request as UrlRequest
+        from urllib.request import urlopen
+
+        try:
+            with urlopen(UrlRequest(url, headers={"User-Agent": "k3-video"}), timeout=15) as resp:
+                raw = resp.read(_MAX_VIDEO_BYTES + 1)
+        except Exception:
+            return None
+        return raw if len(raw) <= _MAX_VIDEO_BYTES else None
+    return None
+
+
+def _sample_video_pngs(raw: bytes) -> list[bytes]:
+    if not raw or len(raw) > _MAX_VIDEO_BYTES:
+        return []
+    import cv2
+
+    handle = -1
+    path = ""
+    try:
+        handle, path = tempfile.mkstemp(prefix="k3-video-", suffix=".mp4")
+        os.write(handle, raw)
+        os.close(handle)
+        handle = -1
+        capture = cv2.VideoCapture(path)
+        total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        indexes = (
+            [round(i * (total - 1) / (_MAX_VIDEO_FRAMES - 1)) for i in range(_MAX_VIDEO_FRAMES)]
+            if total > _MAX_VIDEO_FRAMES
+            else list(range(max(total, 0)))
+        )
+        frames: list = []
+        if indexes:
+            for index in indexes:
+                capture.set(cv2.CAP_PROP_POS_FRAMES, index)
+                ok, frame = capture.read()
+                if ok:
+                    frames.append(frame)
+        if not frames:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            while len(frames) < _MAX_VIDEO_FRAMES:
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                frames.append(frame)
+        capture.release()
+        pngs: list[bytes] = []
+        for frame in frames[:_MAX_VIDEO_FRAMES]:
+            height, width = frame.shape[:2]
+            longest = max(height, width)
+            if longest > _MAX_VIDEO_EDGE:
+                scale = _MAX_VIDEO_EDGE / longest
+                frame = cv2.resize(
+                    frame,
+                    (max(1, int(width * scale)), max(1, int(height * scale))),
+                )
+            ok, encoded = cv2.imencode(".png", frame)
+            if ok:
+                pngs.append(encoded.tobytes())
+        return pngs
+    except Exception:
+        logger.exception("K3 video frame sample failed")
+        return []
+    finally:
+        if handle >= 0:
+            os.close(handle)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _image_parts(pngs: list[bytes]) -> list[dict]:
+    parts: list[dict] = []
+    for index, png in enumerate(pngs, start=1):
+        parts.append({"type": "text", "text": f"[video frame {index}/{len(pngs)}]"})
+        parts.append({
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
+            },
+        })
+    return parts
+
+
+def _expand_content(content):
+    if isinstance(content, str):
+        match = _DATA_VIDEO_RE.search(content)
+        if match is None:
+            return content
+        raw = _bytes_from_video_url("".join(match.group(0).split()))
+        pngs = _sample_video_pngs(raw or b"")
+        if not pngs:
+            return _DATA_VIDEO_RE.sub("[attached video could not be decoded]", content)
+        text = (_DATA_VIDEO_RE.sub(" ", content)).strip()
+        parts: list[dict] = []
+        if text:
+            parts.append({"type": "text", "text": text})
+        parts.extend(_image_parts(pngs))
+        return parts
+    if not isinstance(content, list):
+        return content
+    rewritten = []
+    used = False
+    for part in content:
+        data = part if isinstance(part, dict) else (
+            part.model_dump() if hasattr(part, "model_dump") else None
+        )
+        if not isinstance(data, dict) or not _is_video_part(data):
+            rewritten.append(part)
+            continue
+        if used:
+            rewritten.append({"type": "text", "text": "[additional video omitted]"})
+            continue
+        used = True
+        pngs = _sample_video_pngs(_bytes_from_video_url(_video_url_of(data)) or b"")
+        rewritten.extend(
+            _image_parts(pngs) if pngs else [
+                {"type": "text", "text": "[attached video could not be decoded]"}
+            ]
+        )
+    return rewritten
+
+
+def _accept_video(request) -> None:
+    """Rewrite video inputs into image frames before the image-only adapter."""
+    messages = getattr(request, "messages", None)
+    if not isinstance(messages, list):
+        return
+    for message in messages:
+        if isinstance(message, dict):
+            content = message.get("content")
+            expanded = _expand_content(content)
+            if expanded is not content:
+                message["content"] = expanded
+            continue
+        content = getattr(message, "content", None)
+        expanded = _expand_content(content)
+        if expanded is not content:
+            try:
+                message.content = expanded
+            except Exception:
+                logger.exception("Could not attach decoded video frames")
 
 
 def _count_reasoning_tokens(
@@ -283,6 +487,7 @@ class OpenAIServingChat(GenerateBaseServing):
                 chat_template_kwargs=chat_template_kwargs,
                 model_config=self.model_config,
             )
+        _accept_video(request)
         result = await self.render_chat_request(request)
         if isinstance(result, ErrorResponse):
             return result

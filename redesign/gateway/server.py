@@ -23,7 +23,13 @@ from .capacity import AdaptiveCapacityController, CapacityLimits
 from .classification import ALL_CLASSES, Classifier
 from .clamping import TokenClamp
 from .engine import EngineClient
-from .inspection import Inspection, InspectionError, PromptInspector, UsageObserver
+from .inspection import (
+    Inspection,
+    InspectionError,
+    PromptInspector,
+    UsageObserver,
+    conservative_prompt_reservation,
+)
 from .media import normalize_payload
 from .metrics import Registry
 from .models import Outcome, RequestEnvelope
@@ -31,6 +37,7 @@ from .offbox import OffBoxClient, should_fallback
 from .policy import GatewayPolicy
 from .tokens import TokenEstimator, build_estimator, has_images
 from .workload import WorkloadBudget, WorkloadLimits
+from .throughput import ThroughputCapacityController, ThroughputLimits
 
 PROXIED_PATHS = (
     "/v1/chat/completions",
@@ -157,6 +164,11 @@ class Handler(BaseHTTPRequestHandler):
                     value = state[key]
                     if value is not None:
                         text += f"k3_gateway_capacity_{key} {value}\n"
+                if state.get("throughput_first"):
+                    for key in ("execution_limit", "target_execution_limit", "queued_demand",
+                                "pressure_streak", "healthy_streak"):
+                        text += f"k3_gateway_capacity_{key} {state[key]}\n"
+                    text += f"k3_gateway_capacity_starts_paused {int(state['starts_paused'])}\n"
             if self.service.inspector is not None:
                 text += f"k3_gateway_tokenizer_quarantined {int(self.service.inspector.quarantined)}\n"
             self._raw(200, text.encode(), "text/plain")
@@ -165,6 +177,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(403, {"error": {"message": "local diagnostics only"}})
             else:
                 self._json(200, self.service.admission.recent())
+        elif self.path == "/diagnostics/capacity" and self.service.capacity_controller is not None:
+            if self.client_address[0] not in _LOOPBACK:
+                self._json(403, {"error": {"message": "local diagnostics only"}})
+            else:
+                self._json(200, self.service.capacity_controller.state())
         elif self.path == "/diagnostics/prefix" and self.service.inspector is not None:
             if self.client_address[0] not in _LOOPBACK:
                 self._json(403, {"error": {"message": "local diagnostics only"}})
@@ -197,31 +214,57 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         started = time.monotonic()
+        admission_deadline = (started + self.service.admission.limits.wait_seconds
+                              if self.service.policy.throughput_first else None)
         peer = self.client_address[0] if self.client_address else ""
         inspection = None
         reserved_prompt = None
         if self.service.inspector is not None:
             try:
+                cache_block_size = None
                 try:
-                    epoch = self.service.engine.snapshot().cache_epoch
+                    health = (
+                        self.service.capacity_controller
+                        if self.service.capacity_controller is not None
+                        else self.service.engine
+                    )
+                    health_snapshot = health.snapshot()
+                    epoch = health_snapshot.cache_epoch
+                    cache_block_size = health_snapshot.cache_block_size_tokens
                 except Exception:
                     epoch = None
-                inspection = self.service.inspector.inspect(payload, epoch)
+                if self.service.policy.throughput_first:
+                    inspection = self.service.inspector.inspect(
+                        payload, epoch, cache_block_size=cache_block_size,
+                        deadline=admission_deadline, cancelled=self._client_disconnected,
+                    )
+                else:
+                    inspection = self.service.inspector.inspect(
+                        payload, epoch, cache_block_size=cache_block_size
+                    )
             except InspectionError as exc:
+                if exc.status == 499:
+                    self.close_connection = True
+                    return
                 self.service.registry.increment("inspection_failures_total", reason=exc.reason)
                 self._json(exc.status, {"error": {"message": exc.public_message, "type": "invalid_request_error"
                            if exc.status == 400 else "service_unavailable"}},
                            extra_headers={"Retry-After": "5"} if exc.status == 503 else None)
                 return
-            if inspection is None:
-                prompt = payload.get("prompt")
-                batch = len(prompt) if isinstance(prompt, list) and prompt and not all(type(p) is int for p in prompt) else 1
-                reserved_prompt = self.service.max_model_len * batch
-                self.service.registry.increment("conservative_inspections_total")
         envelope = self.service.envelope(payload, self.headers, self.path, peer, inspection)
+        if self.service.inspector is not None and inspection is None:
+            reserved_prompt = conservative_prompt_reservation(
+                payload, envelope.prompt_tokens, self.service.max_model_len
+            )
+            self.service.registry.increment("conservative_inspections_total")
+            self.service.registry.increment(
+                "conservative_reservations_total",
+                mode="full_context" if reserved_prompt > envelope.prompt_tokens else "estimated",
+            )
         decision = self.service.admission.acquire(
             envelope, reserved_prompt_tokens=reserved_prompt,
             body_bytes=getattr(self, "_request_body_bytes", 0), cancelled=self._client_disconnected,
+            deadline=admission_deadline,
         )
         self._usage_observer = UsageObserver(envelope.streaming) if self.service.inspector is not None else None
         self._upstream_status = 0
@@ -261,9 +304,19 @@ class Handler(BaseHTTPRequestHandler):
 
             self._relay(payload, decision, started)
         finally:
-            self.service.admission.release(decision)
+            complete = False
+            actual_output_tokens = None
+            try:
+                if self.service.inspector is not None:
+                    complete = self._usage_observer.finish()
+                    usage = self._usage_observer.usage
+                    if complete and isinstance(usage, dict):
+                        value = usage.get("completion_tokens")
+                        if type(value) is int and value >= 0:
+                            actual_output_tokens = value
+            finally:
+                self.service.admission.release(decision, actual_output_tokens)
             if self.service.inspector is not None:
-                complete = self._usage_observer.finish()
                 event = self.service.inspector.record(inspection, http_status=self._upstream_status,
                     usage=self._usage_observer.usage, complete=complete,
                     outcome=decision.outcome.name, granted=decision.clamp.granted)
@@ -396,13 +449,15 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def _refuse(self, decision) -> None:
+        # Only actual engine distress is unavailable. Execution capacity,
+        # workload reservations, and queue expiry are retryable rate limits.
         status = 503 if decision.outcome is Outcome.REJECT_SHED else 429
         if decision.clamp.granted == 0:
             status = 400
         self._upstream_status = status
         headers = {}
         if decision.retry_after_seconds:
-            headers["Retry-After"] = str(decision.retry_after_seconds)
+            headers["Retry-After"] = str(2 if self.service.policy.throughput_first else decision.retry_after_seconds)
         headers["x-k3-admission-wait-ms"] = str(round(decision.admission_wait_seconds * 1000))
         self._json(
             status,
@@ -484,7 +539,33 @@ def build_service(
         workload_limits is not None
         and workload_limits.adaptive_borrow_requests > 0
     ):
-        if capacity_limits is None:
+        if workload_limits.throughput_first:
+            maximum = min(concurrency_ceiling, workload_limits.adaptive_borrow_requests)
+            minimum = min(
+                int(os.environ.get("K3_ADAPTIVE_MIN_EXECUTION", "8")),
+                maximum,
+            )
+            initial = max(
+                minimum,
+                min(
+                    int(os.environ.get("K3_ADAPTIVE_INITIAL_EXECUTION", "8")),
+                    maximum,
+                ),
+            )
+            limits = capacity_limits if isinstance(capacity_limits, ThroughputLimits) else ThroughputLimits(
+                max_borrow_requests=maximum,
+                initial_requests=initial,
+                minimum_requests=minimum,
+                stop_kv=workload_limits.adaptive_borrow_kv_limit,
+                green_kv=min(.75, workload_limits.adaptive_borrow_kv_limit * .9),
+                stop_itl=workload_limits.adaptive_borrow_itl_limit,
+                green_itl=float(os.environ.get(
+                    "K3_ADAPTIVE_GREEN_ITL",
+                    str(min(.04, workload_limits.adaptive_borrow_itl_limit * .75)),
+                )),
+            )
+            controller = ThroughputCapacityController(engine, limits)
+        elif capacity_limits is None:
             capacity_limits = CapacityLimits(
                 max_borrow_requests=workload_limits.adaptive_borrow_requests,
                 stop_kv=workload_limits.adaptive_borrow_kv_limit,
@@ -492,7 +573,8 @@ def build_service(
                 stop_itl=workload_limits.adaptive_borrow_itl_limit,
                 green_itl=min(.08, workload_limits.adaptive_borrow_itl_limit * .75),
             )
-        controller = AdaptiveCapacityController(engine, capacity_limits)
+        if controller is None:
+            controller = AdaptiveCapacityController(engine, capacity_limits)
         controller.start()
         health_source = controller
 
@@ -519,7 +601,14 @@ def build_service(
         send_priority=send_priority,
         offbox=offbox,
         batch_customers=batch_customers,
-        inspector=PromptInspector(engine_url) if workload_limits is not None else None,
+        inspector=(PromptInspector(
+            engine_url, max_inflight=4 if workload_limits.throughput_first else 2,
+            slot_wait_seconds=max(.5, admission_limits.wait_seconds) if workload_limits.throughput_first and admission_limits else .5,
+            state_path=os.environ.get(
+                "K3_PREFIX_DIAGNOSTIC_STATE",
+                "/scratch/traces/prefix-inspector.json",
+            ),
+        ) if workload_limits is not None else None),
         max_model_len=max_model_len,
         admission_limits=admission_limits,
         capacity_controller=controller,
@@ -552,21 +641,25 @@ def main(argv: list[str] | None = None) -> int:
     workload_limits = None
     if os.environ.get("K3_WORKLOAD_GUARD") == "1":
         workload_limits = WorkloadLimits(
+            throughput_first=os.environ.get("K3_THROUGHPUT_FIRST") == "1",
             large_context_tokens=int(os.environ.get("K3_LARGE_CONTEXT_TOKENS", "65536")),
             large_context_requests=int(os.environ.get("K3_LARGE_CONTEXT_MAX", "4")),
             long_output_tokens=int(os.environ.get("K3_LONG_OUTPUT_TOKENS", "2048")),
-            long_output_requests=int(os.environ.get("K3_LONG_OUTPUT_MAX", "2")),
             reserved_tokens=int(os.environ.get("K3_RESERVED_TOKEN_BUDGET", "1048576")),
             projected_kv_limit=float(os.environ.get("K3_PROJECTED_KV_LIMIT", "0.85")),
-            long_output_burst_requests=int(os.environ.get("K3_LONG_OUTPUT_BURST_MAX",
-                                                         os.environ.get("K3_LONG_OUTPUT_MAX", "2"))),
             long_output_burst_kv_limit=float(os.environ.get("K3_LONG_OUTPUT_BURST_KV", "0.55")),
             long_output_burst_running_limit=int(os.environ.get("K3_LONG_OUTPUT_BURST_RUNNING", "8")),
             long_output_burst_prompt_limit=int(os.environ.get("K3_LONG_OUTPUT_BURST_PROMPT", "32768")),
+            long_output_base_token_budget=int(os.environ.get("K3_LONG_OUTPUT_BASE_TOKEN_BUDGET", "8192")),
+            long_output_burst_token_budget=int(os.environ.get("K3_LONG_OUTPUT_BURST_TOKEN_BUDGET", "32768")),
             engine_queue_tolerance=int(os.environ.get("K3_ENGINE_QUEUE_TOLERANCE", "0")),
             adaptive_borrow_requests=int(os.environ.get("K3_ADAPTIVE_BORROW_MAX", "0")),
             adaptive_borrow_kv_limit=float(os.environ.get("K3_ADAPTIVE_BORROW_KV", "0.70")),
             adaptive_borrow_itl_limit=float(os.environ.get("K3_ADAPTIVE_BORROW_ITL", "0.12")),
+            output_history_size=int(os.environ.get("K3_OUTPUT_HISTORY_SIZE", "128")),
+            output_min_samples=int(os.environ.get("K3_OUTPUT_MIN_SAMPLES", "8")),
+            output_quantile=float(os.environ.get("K3_OUTPUT_QUANTILE", "0.95")),
+            output_safety_factor=float(os.environ.get("K3_OUTPUT_SAFETY_FACTOR", "1.25")),
         )
     max_waiters = int(os.environ.get("K3_ADMISSION_MAX_WAITERS", "16"))
     admission_limits = AdmissionLimits(
@@ -575,6 +668,7 @@ def main(argv: list[str] | None = None) -> int:
         max_per_customer=int(os.environ.get("K3_ADMISSION_MAX_PER_CUSTOMER", str(max_waiters))),
         max_queued_tokens=int(os.environ.get("K3_ADMISSION_QUEUED_TOKENS", "2097152")),
         max_queued_bytes=int(os.environ.get("K3_ADMISSION_QUEUED_BYTES", "67108864")),
+        fairness_age_seconds=float(os.environ.get("K3_ADMISSION_FAIRNESS_AGE_SECONDS", "5")),
     )
 
     Handler.service = build_service(
@@ -594,7 +688,11 @@ def main(argv: list[str] | None = None) -> int:
         admission_limits=admission_limits,
     )
 
-    server = ThreadingHTTPServer((args.bind, args.port), Handler)
+    class GatewayHTTPServer(ThreadingHTTPServer):
+        # TCP acceptance capacity is separate from execution/admission slots.
+        request_queue_size = 256
+
+    server = GatewayHTTPServer((args.bind, args.port), Handler)
     server.daemon_threads = True
 
     print(f"gateway on {args.bind}:{args.port} -> {args.engine_url}", file=sys.stderr)

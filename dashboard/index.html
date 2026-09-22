@@ -23,6 +23,9 @@ button,a{font:inherit}.skip{position:absolute;left:-9999px}.skip:focus{left:12px
 main{max-width:var(--max);margin:auto;padding:34px 24px 60px}.hero{display:flex;justify-content:space-between;gap:24px;align-items:end;margin-bottom:24px}
 .overline{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.15em;margin-bottom:8px}.hero h1{font-size:30px;line-height:1.1;letter-spacing:-.04em;margin:0 0 8px}.meta{color:var(--muted)}
 .overall{min-width:190px;text-align:right}.overall strong{display:flex;justify-content:flex-end;align-items:center;gap:8px;font-size:15px}.overall strong:before{content:"";width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 14px rgba(61,220,132,.45)}
+.admission-notice{position:relative;display:grid;grid-template-columns:minmax(260px,1fr) auto auto auto;align-items:center;gap:0;margin:-2px 0 18px;overflow:hidden;border:1px solid rgba(245,185,66,.32);border-radius:var(--radius);background:linear-gradient(110deg,rgba(245,185,66,.12),rgba(245,185,66,.035) 48%,var(--surface));box-shadow:0 12px 36px rgba(0,0,0,.18)}
+.admission-notice[hidden]{display:none}.notice-copy{padding:16px 18px 17px 48px;position:relative}.notice-copy:before{content:"!";position:absolute;left:18px;top:18px;width:20px;height:20px;display:grid;place-items:center;border:1px solid rgba(245,185,66,.48);border-radius:50%;color:var(--amber);font-size:11px;font-weight:750;background:rgba(245,185,66,.09)}.notice-copy .eyebrow{display:block;color:var(--amber);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.14em;margin-bottom:3px}.notice-copy strong{display:block;font-size:13px;font-weight:620}.notice-copy p{margin:3px 0 0;color:var(--muted);font-size:10px}
+.notice-metric{min-width:112px;padding:13px 18px;border-left:1px solid rgba(245,185,66,.16)}.notice-metric b{display:block;color:var(--amber);font-size:24px;line-height:1;font-weight:610;letter-spacing:-.035em;font-variant-numeric:tabular-nums}.notice-metric span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.08em;margin-top:6px}.notice-link{align-self:stretch;display:flex;align-items:center;padding:0 18px;border-left:1px solid rgba(245,185,66,.16);color:var(--text);font-size:10px;text-decoration:none;white-space:nowrap}.notice-link:hover{background:rgba(245,185,66,.07)}
 .alerts{display:grid;gap:7px;margin-bottom:18px}.alert{border:1px solid rgba(245,185,66,.4);background:rgba(245,185,66,.07);padding:10px 12px;border-radius:8px}.alert.bad{border-color:rgba(255,91,104,.5);background:rgba(255,91,104,.08)}.allgood{display:none}
 .golden{display:grid;grid-template-columns:repeat(6,1fr);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--surface);margin-bottom:16px}
 .stat{padding:18px;min-width:0;border-right:1px solid var(--line)}.stat:last-child{border:0}.stat .label{color:var(--muted);font-size:11px;margin-bottom:10px}.stat .value{font-size:28px;line-height:1;font-weight:590;letter-spacing:-.045em;font-variant-numeric:tabular-nums}.stat .sub{color:var(--faint);font-size:10px;margin-top:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.stat.bad .value{color:var(--red)}.stat.warn .value{color:var(--amber)}.stat.good .value{color:var(--green)}
@@ -40,7 +43,7 @@ th,td{padding:9px 12px;border-bottom:1px solid #202020;text-align:right;white-sp
 .resource{display:grid;grid-template-columns:240px 1fr;gap:24px;padding:16px}.gauge{display:flex;align-items:end;gap:8px;margin-bottom:14px}.gauge strong{font-size:32px;line-height:1;letter-spacing:-.04em}.bar{height:5px;background:#242424;border-radius:9px;overflow:hidden;margin-top:7px}.bar>i{display:block;height:100%;background:var(--cyan);border-radius:9px}.gpurow{display:grid;grid-template-columns:45px 1fr 80px;gap:9px;align-items:center;margin:7px 0}.gpurow .bar{margin:0}
 details.panel summary{list-style:none;cursor:pointer;padding:14px 15px;font-weight:550}details.panel summary::-webkit-details-marker{display:none}details.panel summary:after{content:"+";float:right;color:var(--muted)}details[open].panel summary:after{content:"−"}details[open].panel summary{border-bottom:1px solid var(--line)}
 @media(max-width:1080px){.golden{grid-template-columns:repeat(3,1fr)}.stat:nth-child(3){border-right:0}.stat:nth-child(-n+3){border-bottom:1px solid var(--line)}.strip{grid-template-columns:repeat(3,1fr)}.stripitem:nth-child(3){border-right:0}.stripitem:nth-child(-n+3){border-bottom:1px solid var(--line)}.grid3{grid-template-columns:1fr 1fr}.grid3>*:last-child{grid-column:span 2}}
-@media(max-width:760px){.navin{height:auto;min-height:54px;padding:9px 13px;flex-wrap:wrap}.navlinks{display:none}.navright{gap:8px}.sourcebar{order:3;width:100%}.clock{display:none}main{padding:24px 13px 44px}.hero{align-items:start}.overall{min-width:auto}.overall .meta{display:none}.golden{grid-template-columns:1fr 1fr}.stat:nth-child(n){border-right:1px solid var(--line);border-bottom:1px solid var(--line)}.stat:nth-child(even){border-right:0}.stat:nth-last-child(-n+2){border-bottom:0}.flow{grid-template-columns:1fr 1fr}.flowstep:nth-child(2){border-right:0}.flowstep:nth-child(-n+2){border-bottom:1px solid var(--line)}.grid2,.grid3{grid-template-columns:1fr}.grid3>*:last-child{grid-column:auto}.strip{grid-template-columns:1fr 1fr}.stripitem:nth-child(n){border-right:1px solid var(--line);border-bottom:1px solid var(--line)}.stripitem:nth-child(even){border-right:0}.stripitem:nth-last-child(-n+2){border-bottom:0}.resource{grid-template-columns:1fr}.opt{display:none}canvas{height:170px}}
+@media(max-width:760px){.navin{height:auto;min-height:54px;padding:9px 13px;flex-wrap:wrap}.navlinks{display:none}.navright{gap:8px}.sourcebar{order:3;width:100%}.clock{display:none}main{padding:24px 13px 44px}.hero{align-items:start}.overall{min-width:auto}.overall .meta{display:none}.admission-notice{grid-template-columns:1fr 1fr}.notice-copy{grid-column:1/-1}.notice-metric{border-top:1px solid rgba(245,185,66,.16);border-left:0}.notice-metric+ .notice-metric{border-left:1px solid rgba(245,185,66,.16)}.notice-link{display:none}.golden{grid-template-columns:1fr 1fr}.stat:nth-child(n){border-right:1px solid var(--line);border-bottom:1px solid var(--line)}.stat:nth-child(even){border-right:0}.stat:nth-last-child(-n+2){border-bottom:0}.flow{grid-template-columns:1fr 1fr}.flowstep:nth-child(2){border-right:0}.flowstep:nth-child(-n+2){border-bottom:1px solid var(--line)}.grid2,.grid3{grid-template-columns:1fr}.grid3>*:last-child{grid-column:auto}.strip{grid-template-columns:1fr 1fr}.stripitem:nth-child(n){border-right:1px solid var(--line);border-bottom:1px solid var(--line)}.stripitem:nth-child(even){border-right:0}.stripitem:nth-last-child(-n+2){border-bottom:0}.resource{grid-template-columns:1fr}.opt{display:none}canvas{height:170px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 </style>
 </head>
@@ -53,12 +56,18 @@ details.panel summary{list-style:none;cursor:pointer;padding:14px 15px;font-weig
 </div></header>
 <main id="main">
   <section class="hero"><div><div class="overline">Production · inference</div><h1>Kimi-K3 control plane</h1><div id="endpointMeta" class="meta">Connecting to service…</div></div><div class="overall"><strong id="overall">Checking</strong><div id="freshness" class="meta"></div></div></section>
+  <section id="admissionNotice" class="admission-notice" aria-label="Admission pressure" aria-live="polite" hidden>
+    <div class="notice-copy"><span class="eyebrow">Admission pressure</span><strong id="noticeTitle">Bounded waits are expiring</strong><p id="noticeDetail"></p></div>
+    <div class="notice-metric"><b id="noticeTimeouts">0</b><span>Queue timeouts</span></div>
+    <div class="notice-metric"><b id="notice429">0</b><span>HTTP 429</span></div>
+    <a class="notice-link" href="#admission">Inspect admission&nbsp;→</a>
+  </section>
   <div id="alerts" class="alerts" role="status" aria-live="polite"></div>
 
   <section id="overview" class="golden" aria-label="Golden signals">
-    <div class="stat"><div class="label">Request rate</div><div id="mRate" class="value">—</div><div id="mRateSub" class="sub">edge · 15 minutes</div></div>
-    <div class="stat"><div class="label">Server error rate</div><div id="mErrors" class="value">—</div><div id="mErrorsSub" class="sub">5xx · 15 minutes</div></div>
-    <div class="stat"><div class="label">Latency p95</div><div id="mLatency" class="value">—</div><div class="sub">edge · 1 hour</div></div>
+    <div class="stat"><div class="label">Request rate</div><div id="mRate" class="value">—</div><div id="mRateSub" class="sub">edge · last 60s</div></div>
+    <div class="stat"><div class="label">Server error rate</div><div id="mErrors" class="value">—</div><div id="mErrorsSub" class="sub">5xx · last 60s</div></div>
+    <div class="stat"><div class="label">Latency p95</div><div id="mLatency" class="value">—</div><div class="sub">edge · last 60s</div></div>
     <div class="stat"><div class="label">KV saturation</div><div id="mKv" class="value">—</div><div id="mKvSub" class="sub">engine · live</div></div>
     <div class="stat"><div class="label">Token throughput</div><div id="mTokens" class="value">—</div><div id="mTokensSub" class="sub">TPM · trailing minute</div></div>
     <div class="stat"><div class="label">Prefix cache reuse</div><div id="mPrefix" class="value">—</div><div id="mPrefixSub" class="sub">cached prompt tokens</div></div>
@@ -71,7 +80,7 @@ details.panel summary{list-style:none;cursor:pointer;padding:14px 15px;font-weig
     <div class="flowstep"><span><i></i>Engine</span><strong>vLLM :8001</strong></div>
   </div>
 
-  <section class="section"><div class="sectionhead"><div><h2>Inference efficiency</h2><p>The vLLM signals that explain slow starts, slow generation, and memory pressure.</p></div><span class="window">ENGINE · TRAILING WINDOW</span></div>
+  <section class="section"><div class="sectionhead"><div><h2>Inference efficiency</h2><p>The vLLM signals that explain slow starts, slow generation, and memory pressure.</p></div><span class="window">ENGINE · LAST 60s</span></div>
     <div id="engineKpis" class="strip"></div>
   </section>
 
@@ -86,19 +95,19 @@ details.panel summary{list-style:none;cursor:pointer;padding:14px 15px;font-weig
   <section id="admission" class="section"><div class="sectionhead"><div><h2>Admission control</h2><p>New gateway metrics: work accepted, recovered by waiting, or rejected by policy.</p></div><span id="gatewayWindow" class="window"></span></div>
     <div id="admissionKpis" class="strip"></div>
     <div class="grid2">
-      <article class="panel"><div class="panelhead"><h3>Rejection reasons</h3><span>recent / process lifetime</span></div><div class="tablewrap"><table><caption>Gateway rejection reasons</caption><thead><tr><th scope="col">Reason</th><th scope="col">Recent</th><th scope="col">Lifetime</th></tr></thead><tbody id="rejectionBody"></tbody></table></div></article>
-      <article class="panel"><div class="panelhead"><h3>Latency by workload</h3><span>gateway samples</span></div><div class="tablewrap"><table><caption>Gateway latency by workload class</caption><thead><tr><th scope="col">Class</th><th scope="col">N</th><th scope="col">TTFT p50</th><th scope="col">TTFT p95</th><th scope="col">E2E p95</th><th scope="col">Wait p95</th></tr></thead><tbody id="classBody"></tbody></table></div></article>
+      <article class="panel"><div class="panelhead"><h3>Rejection reasons</h3><span>last 60s</span></div><div class="tablewrap"><table><caption>Gateway rejection reasons</caption><thead><tr><th scope="col">Reason</th><th scope="col">Last 60s</th></tr></thead><tbody id="rejectionBody"></tbody></table></div></article>
+      <article class="panel"><div class="panelhead"><h3>Latency by workload</h3><span>gateway · last 60s</span></div><div class="tablewrap"><table><caption>Gateway latency by workload class</caption><thead><tr><th scope="col">Class</th><th scope="col">N</th><th scope="col">TTFT p50</th><th scope="col">TTFT p95</th><th scope="col">E2E p95</th><th scope="col">Wait p95</th></tr></thead><tbody id="classBody"></tbody></table></div></article>
     </div>
   </section>
 
   <section id="reliability" class="section"><div class="sectionhead"><div><h2>Reliability</h2><p>Public edge outcomes. Client and policy errors stay separate from service failures.</p></div><span class="window">NGINX LOG</span></div>
     <div class="grid2">
-      <article class="panel"><div class="panelhead"><h3>Service windows</h3><span>1h · 3h · 24h</span></div><div class="tablewrap"><table><caption>Reliability windows</caption><thead><tr><th scope="col">Window</th><th scope="col">Requests</th><th scope="col">Failures</th><th scope="col">5xx rate</th><th scope="col">p50</th><th scope="col">p95</th></tr></thead><tbody id="rollupBody"></tbody></table></div></article>
-      <article class="panel"><div class="panelhead"><h3>Recent failures</h3><span>last 15 minutes</span></div><div class="tablewrap"><table><caption>Recent failed requests</caption><thead><tr><th scope="col">Time</th><th scope="col">Status</th><th scope="col">Path</th><th scope="col" class="opt">Client</th></tr></thead><tbody id="errorBody"></tbody></table></div></article>
+      <article class="panel"><div class="panelhead"><h3>Edge outcomes</h3><span>last 60s</span></div><div class="tablewrap"><table><caption>Reliability windows</caption><thead><tr><th scope="col">Window</th><th scope="col">Requests</th><th scope="col">Failures</th><th scope="col">5xx rate</th><th scope="col">p50</th><th scope="col">p95</th></tr></thead><tbody id="rollupBody"></tbody></table></div></article>
+      <article class="panel"><div class="panelhead"><h3>Recent failures</h3><span>last 60s</span></div><div class="tablewrap"><table><caption>Recent failed requests</caption><thead><tr><th scope="col">Time</th><th scope="col">Status</th><th scope="col">Path</th><th scope="col" class="opt">Client</th></tr></thead><tbody id="errorBody"></tbody></table></div></article>
     </div>
   </section>
 
-  <section id="clients" class="section"><details class="panel"><summary>Client activity · last 15 minutes</summary><div class="tablewrap"><table><caption>Client request activity</caption><thead><tr><th scope="col">Client</th><th scope="col">Requests</th><th scope="col">Share</th><th scope="col">Errors</th><th scope="col">p50</th><th scope="col">p95</th><th scope="col">Last seen</th></tr></thead><tbody id="clientBody"></tbody></table></div></details></section>
+  <section id="clients" class="section"><details class="panel"><summary>Client activity · last 60 seconds</summary><div class="tablewrap"><table><caption>Client request activity</caption><thead><tr><th scope="col">Client</th><th scope="col">Requests</th><th scope="col">Share</th><th scope="col">Errors</th><th scope="col">p50</th><th scope="col">p95</th><th scope="col">Last seen</th></tr></thead><tbody id="clientBody"></tbody></table></div></details></section>
 
   <section class="section"><details class="panel"><summary>Engine and hardware detail</summary><div class="resource"><div><div class="overline">Cache</div><div class="gauge"><strong id="kvDetail">—</strong><span class="muted">KV used</span></div><div class="bar" role="progressbar" aria-label="KV cache usage" id="kvProgress"><i id="kvBar"></i></div><p id="cacheNote" class="muted"></p></div><div><div class="overline">Accelerators</div><div id="gpuList"></div></div></div></details></section>
 </main>
@@ -120,13 +129,22 @@ function renderHeader(d){
   const bad=Object.values(sources).some(x=>x.state!=='up'||x.stale);set('overall',bad?'Degraded':'Operational');document.getElementById('overall').className=bad?'bad':'';
   const alerts=d.alerts||[],box=document.getElementById('alerts');box.innerHTML=alerts.map(x=>`<div class="alert ${esc(x.level)}">${esc(x.text)}</div>`).join('');
 }
+function renderAdmissionNotice(d){
+  const recent=((d.gateway||{}).recent||{}),timeouts=(recent.admission||{}).timeouts||0,status=(d.access||{}).by_status||{},throttled=status.s429||0;
+  const card=document.getElementById('admissionNotice');card.hidden=!(timeouts||throttled);if(card.hidden)return;
+  set('noticeTimeouts',fmt(timeouts));set('notice429',fmt(throttled));
+  set('noticeTitle',timeouts?'Bounded admission waits are expiring':'Rate limiting observed at the edge');
+  const seconds=recent.seconds;set('noticeDetail',timeouts
+    ?`Gateway timeouts are confirmed; 429s can also include tenant or upstream routing limits${valid(seconds)?` · ${fmt(seconds)}s window`:''}.`
+    :'No gateway queue timeout is present; these 429s originate from another policy or routing layer.');
+}
 function renderGolden(d){
-  const a=d.access||{},w=d.window||{},c=d.capacity||{},one=(((d.rollup||{}).windows)||{})['1h']||{};
-  set('mRate',fmt(a.req_pm,1));set('mRateSub',fmt(a.requests)+' requests · edge 15m');
-  set('mErrors',pct(a.server_error_rate));set('mErrorsSub',fmt((a.by_status||{})['5xx']||0)+' server failures · edge 15m');
-  set('mLatency',sec(one.p95_s));set('mKv',pct(c.kv_usage));set('mKvSub',compact(c.used_tokens)+' / '+compact(c.capacity_tokens)+' tokens');
+  const a=d.access||{},w=d.window||{},c=d.capacity||{};
+  set('mRate',fmt(a.req_pm,1));set('mRateSub',fmt(a.requests)+' requests · last 60s');
+  set('mErrors',pct(a.server_error_rate));set('mErrorsSub',fmt((a.by_status||{})['5xx']||0)+' server failures · last 60s');
+  set('mLatency',sec(a.p95_s));set('mKv',pct(c.kv_usage));set('mKvSub',compact(c.used_tokens)+' / '+compact(c.capacity_tokens)+' tokens');
   set('mTokens',compact(w.total_tpm));set('mTokensSub',compact(w.prompt_tpm)+' input · '+compact(w.gen_tpm)+' output');
-  const prefix=valid(c.window_hit_rate)?c.window_hit_rate:c.lifetime_hit_rate;set('mPrefix',pct(prefix));set('mPrefixSub',valid(c.window_hit_rate)?compact(w.cache_hit_tokens)+' of '+compact(w.cache_queried_tokens)+' tokens · trailing window':'engine lifetime · no recent queries');
+  const prefix=c.window_hit_rate;set('mPrefix',pct(prefix));set('mPrefixSub',valid(prefix)?compact(w.cache_hit_tokens)+' of '+compact(w.cache_queried_tokens)+' tokens · last 60s':'no cache lookups in the last 60s');
   const stats=document.querySelectorAll('.golden .stat');stats[1].className='stat '+(a.server_error_rate>.02?'bad':a.server_error_rate>0?'warn':'good');stats[3].className='stat '+(c.kv_usage>=.9?'bad':c.kv_usage>=.7?'warn':'');stats[5].className='stat '+(valid(prefix)&&prefix<.1?'warn':'');
 }
 function strip(label,value,sub='',cls=''){return `<div class="stripitem"><div class="label">${esc(label)}</div><div class="value ${cls}">${value}</div><div class="muted">${esc(sub)}</div></div>`}
@@ -138,25 +156,25 @@ function renderEfficiency(d){
     strip('Queue p95',sec((l.queue||{}).p95),'engine scheduling delay',(l.queue||{}).p95>1?'warn':''),
     strip('Running',fmt(latest.running),'engine requests'),
     strip('Waiting',fmt(latest.waiting),'engine requests',latest.waiting?'warn':''),
-    strip('Preemptions',fmt(c.window_preempted),'trailing window',c.window_preempted?'warn':'')
+    strip('Preemptions',fmt(c.window_preempted),'last 60s',c.window_preempted?'warn':'')
   ].join('');
 }
 function renderAdmission(d){
   const gw=d.gateway||{},c=gw.current||{},r=gw.recent||{},a=r.admission||{},covered=r.seconds||0;
-  set('gatewayWindow',(r.partial?'PARTIAL · ':'')+fmt(covered/60,1)+' MIN OBSERVED');
-  document.getElementById('admissionKpis').innerHTML=[strip('Active',fmt(c.active_requests),'admitted now'),strip('Waiting',fmt(c.queued_requests),compact(c.queued_tokens)+' tokens',c.queued_requests?'warn':''),strip('Queued',fmt(a.queued),'entered wait'),strip('Recovered',fmt(a.admitted_after_wait),'served after wait','good'),strip('Timed out',fmt(a.timeouts),'admission budget',a.timeouts?'warn':''),strip('Reserved',compact(c.reserved_tokens),'execution tokens')].join('');
-  const life=Object.fromEntries((c.rejection_reasons||[]).map(x=>[x.reason,x.value])),recent=Object.fromEntries((r.rejection_reasons||[]).map(x=>[x.reason,x.value]));
-  const reasons=[...new Set([...Object.keys(life),...Object.keys(recent)])].sort((x,y)=>(recent[y]||0)-(recent[x]||0)||(life[y]||0)-(life[x]||0));
-  document.getElementById('rejectionBody').innerHTML=reasons.length?reasons.map(x=>`<tr><td class="mono">${esc(x)}</td><td class="${recent[x]?'warn':''}">${fmt(recent[x]||0)}</td><td>${fmt(life[x]||0)}</td></tr>`).join(''):'<tr><td colspan="3" class="empty">No workload rejections.</td></tr>';
+  set('gatewayWindow',(r.partial?'WARMING UP · ':'LIVE · ')+fmt(covered,0)+'s OBSERVED');
+  document.getElementById('admissionKpis').innerHTML=[strip('Active',fmt(c.active_requests),'admitted now'),strip('Waiting',fmt(c.queued_requests),compact(c.queued_tokens)+' tokens',c.queued_requests?'warn':''),strip('Queued',fmt(a.queued),'last 60s'),strip('Recovered',fmt(a.admitted_after_wait),'last 60s','good'),strip('Timed out',fmt(a.timeouts),'last 60s',a.timeouts?'warn':''),strip('Reserved',compact(c.reserved_tokens),'execution tokens')].join('');
+  const recent=Object.fromEntries((r.rejection_reasons||[]).filter(x=>x.value).map(x=>[x.reason,x.value]));
+  const reasons=Object.keys(recent).sort((x,y)=>recent[y]-recent[x]);
+  document.getElementById('rejectionBody').innerHTML=reasons.length?reasons.map(x=>`<tr><td class="mono">${esc(x)}</td><td class="warn">${fmt(recent[x])}</td></tr>`).join(''):'<tr><td colspan="2" class="empty">No workload rejections in the last 60s.</td></tr>';
   const rows=c.latency||[];document.getElementById('classBody').innerHTML=rows.length?rows.map(x=>`<tr><td class="mono">${esc(x.traffic_class)}</td><td>${fmt(x.request_count||x.ttft_count)}</td><td>${sec(x.ttft_p50)}</td><td>${sec(x.ttft_p95)}</td><td>${sec(x.request_p95)}</td><td>${sec(x.admission_wait_p95)}</td></tr>`).join(''):'<tr><td colspan="6" class="empty">No gateway latency samples.</td></tr>';
 }
 function renderReliability(d){
-  const roll=((d.rollup||{}).windows)||{};document.getElementById('rollupBody').innerHTML=['1h','3h','24h'].map(k=>{const x=roll[k];if(!x)return `<tr><td>${k}</td><td colspan="5" class="empty">Unavailable</td></tr>`;return `<tr><td>${k} ${x.partial?'<span class="pill warn">partial</span>':''}</td><td>${fmt(x.requests)}</td><td class="${x.failures?'warn':''}">${fmt(x.failures)}</td><td class="${x.server_error_rate?'bad':''}">${pct(x.server_error_rate)}</td><td>${sec(x.p50_s)}</td><td>${sec(x.p95_s)}</td></tr>`}).join('');
-  const a=d.access||{},errs=a.recent_errors||[];document.getElementById('errorBody').innerHTML=errs.length?errs.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleTimeString()}</td><td class="${x.status>=500?'bad':'warn'}">${x.status}</td><td>${esc(x.path)}</td><td class="mono opt">${esc(x.cust)}</td></tr>`).join(''):'<tr><td colspan="4" class="empty">No failures in the last 15 minutes.</td></tr>';
+  const a=d.access||{},fails=(a.by_status||{});const failN=(fails['4xx']||0)+(fails['5xx']||0);document.getElementById('rollupBody').innerHTML=`<tr><td>60s</td><td>${fmt(a.requests)}</td><td class="${failN?'warn':''}">${fmt(failN)}</td><td class="${a.server_error_rate?'bad':''}">${pct(a.server_error_rate)}</td><td>${sec(a.p50_s)}</td><td>${sec(a.p95_s)}</td></tr>`;
+  const errs=a.recent_errors||[];document.getElementById('errorBody').innerHTML=errs.length?errs.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleTimeString()}</td><td class="${x.status>=500?'bad':'warn'}">${x.status}</td><td>${esc(x.path)}</td><td class="mono opt">${esc(x.cust)}</td></tr>`).join(''):'<tr><td colspan="4" class="empty">No failures in the last 60s.</td></tr>';
   const clients=a.customers||[];document.getElementById('clientBody').innerHTML=clients.length?clients.map(x=>`<tr><td class="mono">${esc(x.customer)}</td><td>${fmt(x.requests)}</td><td>${pct(x.share,0)}</td><td class="${x.errors?'warn':''}">${fmt(x.errors)}</td><td>${sec(x.p50_s)}</td><td>${sec(x.p95_s)}</td><td>${ago(x.last_seen)}</td></tr>`).join(''):'<tr><td colspan="7" class="empty">No client traffic.</td></tr>';
 }
 function renderResources(d){
-  const c=d.capacity||{},g=d.gpu||{},kv=c.kv_usage;set('kvDetail',pct(kv));document.getElementById('kvBar').style.width=valid(kv)?Math.min(kv*100,100)+'%':'0%';document.getElementById('kvProgress').setAttribute('aria-valuenow',valid(kv)?fmt(kv*100):'0');set('cacheNote',`Prefix reuse ${pct(valid(c.window_hit_rate)?c.window_hit_rate:c.lifetime_hit_rate)} · ${fmt(c.window_preempted)} recent preemptions`);
+  const c=d.capacity||{},g=d.gpu||{},kv=c.kv_usage;set('kvDetail',pct(kv));document.getElementById('kvBar').style.width=valid(kv)?Math.min(kv*100,100)+'%':'0%';document.getElementById('kvProgress').setAttribute('aria-valuenow',valid(kv)?fmt(kv*100):'0');set('cacheNote',`Prefix reuse ${pct(c.window_hit_rate)} · ${fmt(c.window_preempted)} preemptions in the last 60s`);
   document.getElementById('gpuList').innerHTML=(g.per_card||[]).map(x=>`<div class="gpurow"><span class="mono">${esc(x.card)}</span><div class="bar"><i style="width:${valid(x.use)?x.use:0}%"></i></div><span class="muted">${fmt(x.use)}% · ${fmt(x.vram)}%</span></div>`).join('')||'<div class="empty">GPU data unavailable.</div>';
 }
 function prep(cv){const dpr=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;cv.width=w*dpr;cv.height=h*dpr;const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);return{c,w,h}}
@@ -166,8 +184,8 @@ function draw(cv,sets,yfmt,fixedMax){
   for(let i=0;i<4;i++){const y=p.t+(h-p.t-p.b)*i/3;c.strokeStyle='#242424';c.beginPath();c.moveTo(p.l,y);c.lineTo(w-p.r,y);c.stroke();c.fillStyle='#666';c.textAlign='right';c.fillText(yfmt(max*(1-i/3)),p.l-6,y+3)}
   sets.forEach(s=>{if(s.v.length<2)return;const x=i=>p.l+(w-p.l-p.r)*i/(s.v.length-1),y=v=>p.t+(h-p.t-p.b)*(1-Math.min(v,max)/max);c.beginPath();s.v.forEach((v,i)=>i?c.lineTo(x(i),y(v)):c.moveTo(x(i),y(v)));c.strokeStyle=s.color;c.lineWidth=1.7;c.stroke()});
 }
-function drawCharts(d){const vals=k=>(d.series||[]).map(x=>x[k]).filter(valid),w=d.window||{},l=d.latest||{},c=d.capacity||{};draw(document.getElementById('chartTokens'),[{v:vals('prompt_tpm'),color:'#31c5f4'},{v:vals('gen_tpm'),color:'#9d86ff'}],compact);draw(document.getElementById('chartQueue'),[{v:vals('running'),color:'#3ddc84'},{v:vals('waiting'),color:'#ff5b68'}],v=>fmt(v));draw(document.getElementById('chartCache'),[{v:vals('cache_hit_rate').map(x=>x*100),color:'#31c5f4'},{v:vals('kv_usage').map(x=>x*100),color:'#f5b942'}],v=>fmt(v)+'%',100);document.getElementById('tokenSummary').innerHTML=`<span><b style="color:var(--cyan)">Input</b> ${compact(w.prompt_tpm)}</span><span><b style="color:var(--violet)">Output</b> ${compact(w.gen_tpm)}</span>`;document.getElementById('queueSummary').innerHTML=`<span><b style="color:var(--green)">Running</b> ${fmt(l.running)}</span><span><b style="color:var(--red)">Waiting</b> ${fmt(l.waiting)}</span>`;document.getElementById('cacheSummary').innerHTML=`<span><b style="color:var(--cyan)">Prefix</b> ${pct(valid(c.window_hit_rate)?c.window_hit_rate:c.lifetime_hit_rate)}</span><span><b style="color:var(--amber)">KV used</b> ${pct(c.kv_usage)}</span>`}
-function render(d){last=d;renderHeader(d);renderGolden(d);renderEfficiency(d);renderAdmission(d);renderReliability(d);renderResources(d);drawCharts(d)}
+function drawCharts(d){const vals=k=>(d.series||[]).map(x=>x[k]).filter(valid),w=d.window||{},l=d.latest||{},c=d.capacity||{};draw(document.getElementById('chartTokens'),[{v:vals('prompt_tpm'),color:'#31c5f4'},{v:vals('gen_tpm'),color:'#9d86ff'}],compact);draw(document.getElementById('chartQueue'),[{v:vals('running'),color:'#3ddc84'},{v:vals('waiting'),color:'#ff5b68'}],v=>fmt(v));draw(document.getElementById('chartCache'),[{v:vals('cache_hit_rate').map(x=>x*100),color:'#31c5f4'},{v:vals('kv_usage').map(x=>x*100),color:'#f5b942'}],v=>fmt(v)+'%',100);document.getElementById('tokenSummary').innerHTML=`<span><b style="color:var(--cyan)">Input</b> ${compact(w.prompt_tpm)}</span><span><b style="color:var(--violet)">Output</b> ${compact(w.gen_tpm)}</span>`;document.getElementById('queueSummary').innerHTML=`<span><b style="color:var(--green)">Running</b> ${fmt(l.running)}</span><span><b style="color:var(--red)">Waiting</b> ${fmt(l.waiting)}</span>`;document.getElementById('cacheSummary').innerHTML=`<span><b style="color:var(--cyan)">Prefix</b> ${pct(c.window_hit_rate)}</span><span><b style="color:var(--amber)">KV used</b> ${pct(c.kv_usage)}</span>`}
+function render(d){last=d;renderHeader(d);renderAdmissionNotice(d);renderGolden(d);renderEfficiency(d);renderAdmission(d);renderReliability(d);renderResources(d);drawCharts(d)}
 async function tick(){if(document.hidden||inflight)return;inflight=true;try{const r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);render(await r.json())}catch(e){document.getElementById('alerts').innerHTML=`<div class="alert bad">Dashboard API unavailable: ${esc(e.message)}</div>`}finally{inflight=false}}
 tick();setInterval(tick,2000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)tick()});let timer;addEventListener('resize',()=>{clearTimeout(timer);timer=setTimeout(()=>last&&drawCharts(last),120)});
 </script>

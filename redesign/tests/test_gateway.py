@@ -17,12 +17,14 @@ from redesign.gateway.classification import (
     BATCH,
     INTERACTIVE,
     LONG_CONTEXT,
+    MEDIUM_CONTEXT,
     SHORT_CHAT,
     Classifier,
 )
 from redesign.gateway.clamping import TokenClamp
 from redesign.gateway.models import EngineSnapshot, Outcome, Priority, RequestEnvelope
 from redesign.gateway.policy import GatewayPolicy, build_default
+from redesign.gateway.workload import WorkloadBudget, WorkloadLimits
 
 WINDOW = 262_144
 
@@ -40,8 +42,15 @@ class ClassifierTest(unittest.TestCase):
         envelope = _envelope(prompt_tokens=500, batch_hint=True)
         self.assertIs(self.classifier.classify(envelope), BATCH)
 
-    def test_a_short_toolless_prompt_is_short_chat(self):
-        self.assertIs(self.classifier.classify(_envelope(prompt_tokens=4_000)), SHORT_CHAT)
+    def test_a_small_bounded_request_is_express_interactive(self):
+        self.assertIs(self.classifier.classify(
+            _envelope(prompt_tokens=4_000, requested_max_tokens=256)
+        ), INTERACTIVE)
+
+    def test_a_short_prompt_with_long_output_is_short_chat(self):
+        self.assertIs(self.classifier.classify(
+            _envelope(prompt_tokens=4_000, requested_max_tokens=4_096)
+        ), SHORT_CHAT)
 
     def test_tools_make_a_short_prompt_agentic_not_interactive(self):
         envelope = _envelope(prompt_tokens=4_000, has_tools=True)
@@ -55,8 +64,8 @@ class ClassifierTest(unittest.TestCase):
         envelope = _envelope(prompt_tokens=4_000, has_tools=True, batch_hint=True)
         self.assertIs(self.classifier.classify(envelope), BATCH)
 
-    def test_a_medium_prompt_is_interactive(self):
-        self.assertIs(self.classifier.classify(_envelope(prompt_tokens=20_000)), INTERACTIVE)
+    def test_a_medium_prompt_is_not_highest_priority(self):
+        self.assertIs(self.classifier.classify(_envelope(prompt_tokens=20_000)), MEDIUM_CONTEXT)
 
     def test_anything_past_the_interactive_ceiling_is_long_context(self):
         self.assertIs(self.classifier.classify(_envelope(prompt_tokens=200_000)), LONG_CONTEXT)
@@ -71,8 +80,8 @@ class TokenClampTest(unittest.TestCase):
         self.clamp = TokenClamp(max_model_len=WINDOW)
 
     def test_a_modest_request_passes_through(self):
-        result = self.clamp.apply(1_000, 2_000, INTERACTIVE)
-        self.assertEqual(result.granted, 2_000)
+        result = self.clamp.apply(1_000, 256, INTERACTIVE)
+        self.assertEqual(result.granted, 256)
         self.assertEqual(result.reason, clamping.UNCHANGED)
         self.assertFalse(result.clamped)
 
@@ -83,9 +92,9 @@ class TokenClampTest(unittest.TestCase):
         self.assertTrue(result.clamped)
 
     def test_a_long_prompt_is_cut_to_the_remaining_window(self):
-        result = self.clamp.apply(250_000, 128_000, LONG_CONTEXT)
+        result = self.clamp.apply(261_000, 128_000, LONG_CONTEXT)
         self.assertEqual(result.reason, clamping.CONTEXT_WINDOW)
-        self.assertEqual(result.granted, self.clamp.available_for_output(250_000))
+        self.assertEqual(result.granted, self.clamp.available_for_output(261_000))
 
     def test_the_grant_always_fits_the_window(self):
         for prompt in (1_000, 100_000, 200_000, 245_000):
@@ -176,7 +185,9 @@ class PolicyTest(unittest.TestCase):
         self.policy = build_default(max_model_len=WINDOW, concurrency_ceiling=96)
 
     def test_a_normal_request_is_admitted_with_a_priority(self):
-        decision = self.policy.decide(_envelope(prompt_tokens=20_000))
+        decision = self.policy.decide(
+            _envelope(prompt_tokens=1_000, requested_max_tokens=256)
+        )
         self.assertTrue(decision.admitted)
         self.assertIs(decision.priority, Priority.INTERACTIVE)
 
@@ -212,7 +223,9 @@ class PolicyTest(unittest.TestCase):
         policy = build_default(
             max_model_len=WINDOW, concurrency_ceiling=96, offbox_configured=True
         )
-        decision = policy.decide(_envelope(prompt_tokens=2_000))
+        decision = policy.decide(
+            _envelope(prompt_tokens=2_000, requested_max_tokens=1_000)
+        )
         self.assertTrue(decision.admitted)
         self.assertIn("routed off-box", decision.notes)
 
@@ -238,7 +251,9 @@ class PolicyTest(unittest.TestCase):
                 StaticHealthSource(EngineSnapshot(0.99, 60, 30, 5.0))
             ),
         )
-        decision = policy.decide(_envelope(prompt_tokens=20_000))
+        decision = policy.decide(
+            _envelope(prompt_tokens=2_000, requested_max_tokens=256)
+        )
         self.assertTrue(decision.admitted)
 
     def test_a_distressed_engine_sheds_agentic_traffic(self):
@@ -261,6 +276,31 @@ class PolicyTest(unittest.TestCase):
             self.assertTrue(self.policy.decide(envelope).admitted)
         decision = self.policy.decide(envelope)
         self.assertIs(decision.outcome, Outcome.REJECT_BUDGET)
+        self.assertEqual(decision.retry_after_seconds, 30)
+
+    def test_workload_token_exhaustion_is_a_rate_limit_not_engine_unavailable(self):
+        health = StaticHealthSource(EngineSnapshot(0.1, 0, 0, 0, 1_000_000))
+        policy = GatewayPolicy(
+            classifier=Classifier(),
+            clamp=TokenClamp(max_model_len=WINDOW),
+            budget=ClassBudget.from_classes(96, ALL_CLASSES),
+            breaker=CircuitBreaker(health),
+            workload_budget=WorkloadBudget(
+                WorkloadLimits(
+                    long_output_requests=1,
+                    long_output_base_token_budget=2560,
+                    long_output_burst_token_budget=2560,
+                ),
+                health,
+            ),
+        )
+        envelope = _envelope(
+            prompt_tokens=1_000, requested_max_tokens=3_000
+        )
+        self.assertTrue(policy.decide(envelope).admitted)
+        decision = policy.decide(envelope)
+        self.assertIs(decision.outcome, Outcome.REJECT_BUDGET)
+        self.assertEqual(decision.reason, "workload budget: long_output_budget")
         self.assertEqual(decision.retry_after_seconds, 30)
 
 

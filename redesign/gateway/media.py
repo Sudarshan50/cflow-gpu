@@ -6,6 +6,7 @@ import base64
 import binascii
 import io
 import json
+import re
 import subprocess
 import tempfile
 import threading
@@ -27,6 +28,11 @@ VIDEO_PART_TYPES = {
 }
 NOTE = "[attached media could not be decoded; continuing with the text]"
 VIDEO_LIMIT_NOTE = "[additional video omitted; one video is allowed per request]"
+VIDEO_EXTENSIONS = (".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v")
+_DATA_VIDEO_RE = re.compile(
+    r"data:video/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+",
+    re.IGNORECASE,
+)
 MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024
 MAX_VIDEO_BYTES = 48 * 1024 * 1024
 DOWNLOAD_TIMEOUT = 10
@@ -88,6 +94,7 @@ def normalize_payload(payload: dict) -> dict:
     kwargs = payload.get("chat_template_kwargs")
     if isinstance(kwargs, dict):
         _normalize_thinking(kwargs)
+    _normalize_tool_choice(payload)
     for key in TOOL_KEYS:
         if key in payload:
             payload[key] = _canonical_tools(payload[key])
@@ -164,6 +171,53 @@ def _normalize_reasoning_request(payload: dict) -> None:
         payload.pop("thinking", None)
     if isinstance(enable_thinking, bool):
         payload.pop("enable_thinking", None)
+
+
+def _tool_name(tool: Any) -> str | None:
+    if isinstance(tool, str) and tool.strip():
+        return tool.strip()
+    if not isinstance(tool, dict):
+        return None
+    function = tool.get("function")
+    if isinstance(function, dict) and isinstance(function.get("name"), str):
+        return function["name"]
+    name = tool.get("name")
+    return name if isinstance(name, str) and name else None
+
+
+def _normalize_tool_choice(payload: dict) -> None:
+    """Rewrite Responses `allowed_tools` into a Chat Completions tool_choice.
+
+    LiteLLM rejects `{"type": "allowed_tools", ...}` and reports the exception
+    as a 500, which the portal treats as the model being down.
+    """
+    choice = payload.get("tool_choice")
+    if not isinstance(choice, dict) or "function" in choice:
+        return
+    nested = choice.get("allowed_tools")
+    if choice.get("type") != "allowed_tools" and not isinstance(nested, dict):
+        return
+    spec = nested if isinstance(nested, dict) else choice
+    mode = spec.get("mode") if isinstance(spec.get("mode"), str) else choice.get("mode")
+    mode = mode.lower() if isinstance(mode, str) else "auto"
+    if mode not in {"auto", "none", "required"}:
+        mode = "auto"
+    names: list[str] = []
+    declared = spec.get("tools") if isinstance(spec.get("tools"), list) else choice.get("tools")
+    if isinstance(declared, list):
+        for item in declared:
+            name = _tool_name(item)
+            if name and name not in names:
+                names.append(name)
+    tools = payload.get("tools")
+    if names and isinstance(tools, list):
+        kept = [tool for tool in tools if _tool_name(tool) in names]
+        if kept:
+            payload["tools"] = kept
+    if mode == "required" and len(names) == 1:
+        payload["tool_choice"] = {"type": "function", "function": {"name": names[0]}}
+    else:
+        payload["tool_choice"] = mode
 
 
 def _canonical_tools(tools: Any) -> Any:
@@ -246,24 +300,83 @@ def _normalize_thinking(body: dict) -> None:
 
 def _normalize_message(message: dict, video_budget: list[int] | None = None) -> dict:
     content = message.get("content")
+    # LiteLLM scans user content with `for part in content`. A bare number is
+    # truthy and not a string, so that loop raises "'int' object is not iterable"
+    # and the proxy reports it as a 500.
+    if type(content) in (int, float):
+        message = dict(message)
+        message["content"] = str(content)
+        return message
+    if isinstance(content, str):
+        expanded = _expand_string_content(content)
+        if expanded is None:
+            return message
+        content = expanded
     if not isinstance(content, list):
         return message
     rewritten: list[Any] = []
     for part in content:
         if isinstance(part, dict) and _looks_like_media(part):
             url = _extract_url(part)
-            if _looks_like_video(part, url):
+            if _looks_like_video(part, url) or _mislabeled_video(part, url):
                 if video_budget is not None and video_budget[0] <= 0:
                     rewritten.append({"type": "text", "text": VIDEO_LIMIT_NOTE})
                     continue
                 if video_budget is not None:
                     video_budget[0] -= 1
+                part = dict(part)
+                part["type"] = part.get("type") if part.get("type") in VIDEO_PART_TYPES else "video_url"
             rewritten.extend(_normalize_part(part))
         else:
             rewritten.append(part)
     out = dict(message)
     out["content"] = rewritten
     return out
+
+
+def _expand_string_content(text: str) -> list[dict] | None:
+    """NewAPI sometimes inlines a video as text, or as a JSON content array.
+
+    A data:video blob counted as characters is hundreds of thousands of tokens
+    and is rejected before the frame decoder runs.
+    """
+    stripped = text.strip()
+    if stripped.startswith("["):
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list) and parsed and all(isinstance(item, dict) for item in parsed):
+            return parsed
+    if _DATA_VIDEO_RE.search(text) is None:
+        return None
+    parts: list[dict] = []
+    cursor = 0
+    for match in _DATA_VIDEO_RE.finditer(text):
+        chunk = text[cursor:match.start()].strip()
+        if chunk:
+            parts.append({"type": "text", "text": chunk})
+        parts.append({
+            "type": "video_url",
+            "video_url": {"url": "".join(match.group(0).split())},
+        })
+        cursor = match.end()
+    tail = text[cursor:].strip()
+    if tail:
+        parts.append({"type": "text", "text": tail})
+    return parts or None
+
+
+def _mislabeled_video(part: dict, url: str) -> bool:
+    """An image part whose bytes are an MP4/WebM still has to be decoded."""
+    if not url.startswith("data:") or url.lower().startswith("data:image/"):
+        return False
+    raw = _bytes_from_url(url)
+    return bool(raw and _looks_like_video_bytes(raw))
+
+
+def _looks_like_video_bytes(raw: bytes) -> bool:
+    return (len(raw) >= 12 and raw[4:8] == b"ftyp") or raw.startswith(b"\x1a\x45\xdf\xa3")
 
 
 def _looks_like_media(part: dict) -> bool:
@@ -368,6 +481,15 @@ def _looks_like_video(part: dict, url: str) -> bool:
         return True
     if any(key in part for key in ("video_url", "video", "input_video")):
         return True
+    path = url.split("?", 1)[0].split("#", 1)[0].lower()
+    if path.endswith(VIDEO_EXTENSIONS):
+        return True
+    for key in ("image_url", "image", "file"):
+        value = part.get(key)
+        if isinstance(value, dict):
+            mime = str(value.get("mime_type") or value.get("mimeType") or "").lower()
+            if mime.startswith("video/"):
+                return True
     source = part.get("source")
     if isinstance(source, dict) and str(
         source.get("media_type") or source.get("mediaType") or ""

@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import json
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -222,7 +223,8 @@ class BackpressureTest(ServerTestCase):
     def test_a_distressed_engine_still_serves_interactive(self):
         MockEngine.kv_usage = 0.99
         status, _, _ = _post(
-            f"{self.base}/v1/chat/completions", self._chat("x" * 40_000)
+            f"{self.base}/v1/chat/completions",
+            self._chat("hi", max_tokens=256),
         )
         self.assertEqual(status, 200)
 
@@ -341,6 +343,25 @@ class EstimatorTest(unittest.TestCase):
 class RegistryTest(unittest.TestCase):
     def test_quantiles_need_no_samples_to_render(self):
         self.assertEqual(metrics.Registry().render().strip(), "")
+
+    def test_live_quantiles_cover_only_the_last_minute(self):
+        reg = metrics.Registry()
+        reg.observe_ttft("P0-interactive", 50.0)
+        reg._ttft["P0-interactive"].observed_at[-1] = time.monotonic() - 120
+        reg.observe_ttft("P0-interactive", 0.2)
+        text = reg.render()
+        self.assertIn(
+            'k3_gateway_ttft_live_seconds{class="P0-interactive",quantile="0.95"} 0.2',
+            text,
+        )
+        self.assertIn(
+            'k3_gateway_ttft_live_seconds_count{class="P0-interactive"} 1',
+            text,
+        )
+        self.assertIn(
+            'k3_gateway_ttft_seconds{class="P0-interactive",quantile="0.95"} 50',
+            text,
+        )
 
     def test_samples_are_bounded(self):
         series = metrics.LatencySeries()

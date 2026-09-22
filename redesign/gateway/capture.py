@@ -39,6 +39,9 @@ class TraceRecord:
     rescued_from_rejection: bool
     streaming: bool
     has_tools: bool
+    policy_reason: str = ""
+    admission_reason: str = ""
+    admission_wait_seconds: float = 0.0
 
 
 class TraceSink(abc.ABC):
@@ -86,6 +89,9 @@ class TraceRecorder:
             rescued_from_rejection=decision.rescued_from_rejection,
             streaming=envelope.streaming,
             has_tools=envelope.has_tools,
+            policy_reason=decision.reason,
+            admission_reason=decision.admission_reason,
+            admission_wait_seconds=decision.admission_wait_seconds,
         )
         self._sink.write(record)
         return record

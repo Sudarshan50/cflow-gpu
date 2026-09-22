@@ -163,8 +163,8 @@ class TokenLimitPrecedenceTest(unittest.TestCase):
             ({"max_tokens": 16, "max_completion_tokens": None}, 16),
             ({"max_tokens": 16, "max_completion_tokens": 0}, 16),
             ({"max_tokens": 16, "max_completion_tokens": "1000"}, 16),
-            ({"max_tokens": 128_000, "max_completion_tokens": 128_000}, 4096),
-            ({}, 4096),
+            ({"max_tokens": 128_000, "max_completion_tokens": 128_000}, 2048),
+            ({}, 2048),
         ):
             with self.subTest(aliases=aliases):
                 data = chat(**aliases)

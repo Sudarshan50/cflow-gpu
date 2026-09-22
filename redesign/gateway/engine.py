@@ -235,6 +235,11 @@ class EngineClient(EngineHealthSource):
             text = response.read().decode("utf-8", "replace")
             metrics = parse_prometheus(text)
             capacities = [int(value) for value in re.findall(r'kv_cache_size_tokens="(\d+)"', text)]
+            cache_blocks = [
+                int(value)
+                for labels in re.findall(r'vllm:cache_config_info\{([^}]*)\}', text)
+                for value in re.findall(r'(?:^|,)block_size="(\d+)"', labels)
+            ]
         finally:
             conn.close()
 
@@ -270,6 +275,7 @@ class EngineClient(EngineHealthSource):
                 mean_itl_seconds=mean_itl,
                 mean_ttft_seconds=mean_ttft,
                 mean_prefill_seconds=mean_prefill,
+                cache_block_size_tokens=min(cache_blocks) if cache_blocks else None,
             )
             self._cached_snapshot = snapshot
             self._cached_at = snapshot.sampled_at

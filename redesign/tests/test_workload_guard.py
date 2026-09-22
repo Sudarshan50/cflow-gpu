@@ -1,6 +1,7 @@
 """Resource isolation and content-free diagnostics, including real HTTP wiring."""
 import concurrent.futures
 import json
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -8,7 +9,14 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from redesign.gateway.backpressure import StaticHealthSource
-from redesign.gateway.inspection import InspectionError, PromptInspector, UsageObserver, inspectable, tokenize_projection
+from redesign.gateway.inspection import (
+    InspectionError,
+    PromptInspector,
+    UsageObserver,
+    conservative_prompt_reservation,
+    inspectable,
+    tokenize_projection,
+)
 from redesign.gateway.models import EngineSnapshot, RequestEnvelope
 from redesign.gateway.policy import build_default
 from redesign.gateway.server import Handler, build_service, overcommitted_replicas
@@ -19,7 +27,10 @@ from redesign.tenancy.policy import TenancyPolicy
 class ReservationTests(unittest.TestCase):
     def budget(self, **values):
         config = dict(large_context_tokens=100, large_context_requests=1,
-                      long_output_tokens=20, long_output_requests=1, reserved_tokens=1000)
+                      long_output_tokens=20, long_output_requests=1,
+                      long_output_base_token_budget=25,
+                      long_output_burst_token_budget=25,
+                      reserved_tokens=1000)
         config.update(values)
         return WorkloadBudget(WorkloadLimits(**config), StaticHealthSource(EngineSnapshot.healthy()))
 
@@ -30,7 +41,7 @@ class ReservationTests(unittest.TestCase):
         self.assertEqual(budget.acquire(200, 10)[1], "large_context_slots")
         b, _ = budget.acquire(10, 30)
         self.assertIsNotNone(b)
-        self.assertEqual(budget.acquire(10, 30)[1], "long_output_slots")
+        self.assertEqual(budget.acquire(10, 30)[1], "long_output_budget")
         c, _ = budget.acquire(10, 10)
         self.assertIsNotNone(c)
         for lease in (a, b, c):
@@ -101,7 +112,7 @@ class ReservationTests(unittest.TestCase):
 
 class FingerprintTests(unittest.TestCase):
     def test_history_means_completed_prefix_not_guaranteed_cache_hit(self):
-        inspector = PromptInspector("http://127.0.0.1:1")
+        inspector = PromptInspector("http://127.0.0.1:1", block_size=768)
         first = inspector._fingerprint(list(range(2000)), "test", 1)
         inspector.record(first, http_status=200, usage={"prompt_tokens": 2000, "completion_tokens": 1,
                          "prompt_tokens_details": {"cached_tokens": 0}}, complete=True, outcome="ADMIT", granted=1)
@@ -111,7 +122,7 @@ class FingerprintTests(unittest.TestCase):
         self.assertIsInstance(first.replay_fingerprint, str)
 
     def test_changed_early_token_changes_prefix_fingerprint(self):
-        inspector = PromptInspector("http://127.0.0.1:1")
+        inspector = PromptInspector("http://127.0.0.1:1", block_size=768)
         tokens = list(range(800))
         first = inspector._fingerprint(tokens, "test", 1)
         tokens[0] = 9999
@@ -119,7 +130,7 @@ class FingerprintTests(unittest.TestCase):
         self.assertNotEqual(first.prefix_768, second.prefix_768)
 
     def test_engine_epoch_change_discards_prior_history_and_late_old_results(self):
-        inspector = PromptInspector("http://127.0.0.1:1")
+        inspector = PromptInspector("http://127.0.0.1:1", block_size=768)
         old = inspector._fingerprint(list(range(800)), "test", 1)
         new = inspector._fingerprint(list(range(800)), "test", 2)
         inspector.record(old, http_status=200, usage={"prompt_tokens": 800, "prompt_tokens_details": {"cached_tokens": 0}},
@@ -128,13 +139,52 @@ class FingerprintTests(unittest.TestCase):
         self.assertEqual(inspector._fingerprint(list(range(800)), "test", 2).prior_completed_prefix_tokens, 0)
 
     def test_usage_mismatch_or_incomplete_response_does_not_teach_history(self):
-        inspector = PromptInspector("http://127.0.0.1:1")
+        inspector = PromptInspector("http://127.0.0.1:1", block_size=768)
         first = inspector._fingerprint(list(range(800)), "test", 1)
         inspector.record(first, http_status=200, usage={"prompt_tokens": 801, "prompt_tokens_details": {"cached_tokens": 0}},
                          complete=True, outcome="ADMIT", granted=1)
         self.assertEqual(inspector.recent()["history_entries"], 0)
         self.assertTrue(inspector.recent()["counting_quarantined"])
         self.assertIsNone(inspector.inspect({"prompt": [1, 2]}))
+
+    def test_history_survives_gateway_restart_for_same_engine_epoch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = f"{directory}/prefix-state.json"
+            first_inspector = PromptInspector(
+                "http://127.0.0.1:1", block_size=128, state_path=state
+            )
+            first = first_inspector._fingerprint(list(range(400)), "test", 7)
+            first_inspector.record(
+                first, http_status=200,
+                usage={"prompt_tokens": 400, "completion_tokens": 1,
+                       "prompt_tokens_details": {"cached_tokens": 0}},
+                complete=True, outcome="ADMIT", granted=1,
+            )
+            restored = PromptInspector("http://127.0.0.1:1", state_path=state)
+            second = restored._fingerprint(list(range(401)), "test", 7, 128)
+            self.assertEqual(second.prior_completed_prefix_tokens, 384)
+            self.assertEqual(second.scope, first.scope)
+            self.assertEqual(restored.recent()["cache_block_size"], 128)
+            self.assertTrue(restored.recent()["state_persistent"])
+
+    def test_engine_epoch_or_block_size_change_invalidates_persisted_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = f"{directory}/prefix-state.json"
+            inspector = PromptInspector(
+                "http://127.0.0.1:1", block_size=128, state_path=state
+            )
+            first = inspector._fingerprint(list(range(400)), "test", 7)
+            inspector.record(
+                first, http_status=200,
+                usage={"prompt_tokens": 400, "completion_tokens": 1,
+                       "prompt_tokens_details": {"cached_tokens": 0}},
+                complete=True, outcome="ADMIT", granted=1,
+            )
+            restarted = PromptInspector("http://127.0.0.1:1", state_path=state)
+            changed = restarted._fingerprint(list(range(400)), "test", 8, 64)
+            self.assertNotEqual(changed.scope, first.scope)
+            self.assertEqual(changed.cache_block_size, 64)
+            self.assertEqual(changed.prior_completed_prefix_tokens, 0)
 
     def test_projection_preserves_reasoning_alias_without_mutating_the_request(self):
         message = {"role": "assistant", "content": "answer", "reasoning_content": "preserved thinking"}
@@ -159,6 +209,30 @@ class FingerprintTests(unittest.TestCase):
         self.assertFalse(inspectable({"messages": [], "truncate_prompt_tokens": 100}))
         self.assertTrue(inspectable({"messages": [{"role": "assistant", "content": None, "reasoning_content": "retained"}]}))
         self.assertFalse(inspectable({"messages": [], "prompt": "a different completion input"}))
+
+    def test_generation_constraints_choose_safe_prompt_counting_path(self):
+        base = {"messages": [{"role": "user", "content": "hello"}]}
+        self.assertFalse(inspectable({**base, "response_format": {"type": "json_object"}}))
+        self.assertFalse(inspectable({
+            **base,
+            "tools": [{"type": "function", "function": {"name": "lookup"}}],
+            "tool_choice": {"type": "function", "function": {"name": "lookup"}},
+        }))
+        self.assertFalse(inspectable({**base, "function_call": {"name": "legacy"}}))
+        self.assertEqual(conservative_prompt_reservation(
+            {**base, "tool_choice": "required"}, 120, 262144
+        ), 120)
+
+    def test_conservative_reservation_uses_estimate_except_for_opaque_inputs(self):
+        ordinary = {"messages": [{"role": "user", "content": "hello"}]}
+        multimodal = {"messages": [{"role": "user", "content": [
+            {"type": "text", "text": "describe"},
+            {"type": "image_url", "image_url": {"url": "https://example.invalid/image.png"}},
+        ]}]}
+        opaque = {**ordinary, "prompt_embeds": [[0.1, 0.2]]}
+        self.assertEqual(conservative_prompt_reservation(ordinary, 120, 262144), 120)
+        self.assertEqual(conservative_prompt_reservation(multimodal, 4210, 262144), 4210)
+        self.assertEqual(conservative_prompt_reservation(opaque, 120, 262144), 262144)
 
     def test_replica_limits_cannot_be_bypassed_with_coercible_values(self):
         for value in ("2", "1", True, 0, -1, 2):
@@ -268,7 +342,8 @@ class HttpGuardTests(unittest.TestCase):
             pending = pool.submit(self.post, "large")
             self.assertTrue(self.started.wait(3))
             code, body, headers = self.post("large")
-            self.assertEqual(code, 503)
+            self.assertEqual(code, 429)
+            self.assertEqual(body["error"]["type"], "rate_limit_error")
             self.assertIn("large_context_slots", body["error"]["message"])
             self.assertIn("Retry-After", headers)
             self.assertEqual(self.post("small")[0], 200)
@@ -290,7 +365,8 @@ class HttpGuardTests(unittest.TestCase):
             urllib.request.urlopen(request, timeout=5)
         with context.exception as response:
             body = json.load(response)
-        self.assertEqual(context.exception.code, 503)
+        self.assertEqual(context.exception.code, 429)
+        self.assertEqual(body["error"]["type"], "rate_limit_error")
         self.assertIn("reserved_tokens", body["error"]["message"])
         self.assertEqual(self.inferences, [])
 

@@ -801,6 +801,14 @@ NGINX
 )
   body="${body//__GATEWAY_PORT__/${GATEWAY_PORT}}"
   body="${body//__DOMAIN__/${DOMAIN}}"
+  if [[ "${K3_THROUGHPUT_FIRST:-0}" == "1" ]]; then
+    # Keep the legacy zones defined for rollback; throughput-mode requests use
+    # authenticated quotas and the gateway's shared execution/waiting budgets.
+    body="${body/limit_req  zone=k3_ip_req burst=40 nodelay;/# Throughput-first: bounded downstream admission.}"
+    body="${body/limit_req  zone=k3_req burst=200 nodelay;/# Authenticated quota enforcement is in LiteLLM.}"
+    body="${body/limit_conn k3_ip_conn 96;/limit_conn k3_ip_conn 256;}"
+    body="${body/limit_conn k3_conn 96;/limit_conn k3_conn 256;}"
+  fi
 
   if (( DRY_RUN )); then
     printf '  \033[36m+\033[0m write %s (domain %s)\n' "$conf" "${DOMAIN}"

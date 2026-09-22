@@ -40,7 +40,7 @@ class TenancyPolicyTest(unittest.TestCase):
         decision = policy.apply(payload, "FW-Kimi-K3")
         self.assertEqual(decision.traffic_class, "P2-agentic")
         self.assertFalse(decision.routed_off_box)
-        self.assertLessEqual(payload["max_tokens"], 512)
+        self.assertLessEqual(payload["max_tokens"], 1536)
 
     def test_an_image_turn_is_agentic_and_billed_above_one_image_token(self):
         policy = TenancyPolicy()

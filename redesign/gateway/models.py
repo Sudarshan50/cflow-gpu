@@ -49,6 +49,7 @@ class EngineSnapshot:
     mean_itl_seconds: float | None = None
     mean_ttft_seconds: float | None = None
     mean_prefill_seconds: float | None = None
+    cache_block_size_tokens: int | None = None
 
     @classmethod
     def healthy(cls) -> "EngineSnapshot":

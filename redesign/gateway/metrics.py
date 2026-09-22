@@ -11,12 +11,16 @@ Exposes Prometheus text. Stdlib only; no client library.
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 
 # Keeping every observation would grow without bound; keeping too few makes p95
 # noisy. 2048 per class is a few hundred kB and stable at this request rate.
 MAX_SAMPLES_PER_CLASS = 2048
+# Dashboard and other live readers use this horizon. The longer series above
+# stays available for the SLO alert, which needs a stable sample, not a minute.
+LIVE_WINDOW_S = 60.0
 
 QUANTILES = (0.5, 0.95, 0.99)
 
@@ -33,15 +37,27 @@ class LatencySeries:
     samples: deque[float] = field(
         default_factory=lambda: deque(maxlen=MAX_SAMPLES_PER_CLASS)
     )
+    observed_at: deque[float] = field(
+        default_factory=lambda: deque(maxlen=MAX_SAMPLES_PER_CLASS)
+    )
 
     def observe(self, seconds: float) -> None:
         self.samples.append(seconds)
+        self.observed_at.append(time.monotonic())
 
     def quantile(self, q: float) -> float | None:
         if not self.samples:
             return None
         ordered = sorted(self.samples)
         return ordered[min(len(ordered) - 1, int(q * len(ordered)))]
+
+    def window_values(self, window_s: float) -> list[float]:
+        cutoff = time.monotonic() - window_s
+        return [
+            value
+            for seen_at, value in zip(self.observed_at, self.samples)
+            if seen_at >= cutoff
+        ]
 
 
 class Registry:
@@ -77,6 +93,12 @@ class Registry:
             ttft = {k: sorted(v.samples) for k, v in self._ttft.items()}
             total = {k: sorted(v.samples) for k, v in self._total.items()}
             admission_wait = {k: sorted(v.samples) for k, v in self._admission_wait.items()}
+            live_ttft = {k: sorted(v.window_values(LIVE_WINDOW_S)) for k, v in self._ttft.items()}
+            live_total = {k: sorted(v.window_values(LIVE_WINDOW_S)) for k, v in self._total.items()}
+            live_wait = {
+                k: sorted(v.window_values(LIVE_WINDOW_S))
+                for k, v in self._admission_wait.items()
+            }
 
         lines: list[str] = []
         for (name, labels), value in sorted(counters.items()):
@@ -87,6 +109,9 @@ class Registry:
         lines += _render_quantiles("ttft_seconds", ttft)
         lines += _render_quantiles("request_seconds", total)
         lines += _render_quantiles("admission_wait_seconds", admission_wait)
+        lines += _render_quantiles("ttft_live_seconds", live_ttft)
+        lines += _render_quantiles("request_live_seconds", live_total)
+        lines += _render_quantiles("admission_wait_live_seconds", live_wait)
         return "\n".join(lines) + "\n"
 
 

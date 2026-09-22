@@ -37,6 +37,14 @@ class GatewayPolicy:
         self.workload_budget = workload_budget
         self.capacity_controller = capacity_controller
 
+    @property
+    def throughput_first(self) -> bool:
+        return bool(getattr(self.capacity_controller, "throughput_first", False))
+
+    def set_queued_demand(self, count: int) -> None:
+        if self.throughput_first:
+            self.capacity_controller.set_queued_demand(count)
+
     def admission_wait_seconds(self, configured: float) -> float:
         if self.capacity_controller is None:
             return configured
@@ -67,7 +75,11 @@ class GatewayPolicy:
         large = long = False
         if self.workload_budget is not None:
             charge, large, long = self.workload_budget.requirements(reserved, clamp.granted, envelope.has_images)
-            if charge > self.workload_budget.limits.reserved_tokens:
+            if self.throughput_first and not self.workload_budget.can_fit_alone(
+                reserved, clamp.granted, envelope.has_images, traffic_class.name
+            ):
+                return None, charge
+            if not self.throughput_first and charge > self.workload_budget.limits.reserved_tokens:
                 return None, charge
         if self._budget.limit_for(traffic_class) <= 0:
             return None, charge
@@ -75,7 +87,9 @@ class GatewayPolicy:
 
     def admission_rejection(self, envelope: RequestEnvelope, reason: str) -> Decision:
         traffic_class, clamp = self._preview(envelope)
-        return self._reject(envelope, traffic_class, clamp, Outcome.REJECT_SHED, reason)
+        # Queue bounds and expiry are admission capacity, not proof that the
+        # engine is unavailable. Circuit-breaker decisions remain REJECT_SHED.
+        return self._reject(envelope, traffic_class, clamp, Outcome.REJECT_BUDGET, reason)
 
     def can_wait(self, decision: Decision, reserved_prompt_tokens: int | None = None) -> bool:
         if decision.admitted or decision.clamp.granted == 0:
@@ -83,7 +97,12 @@ class GatewayPolicy:
         traffic_class = self._classifier.classify(decision.envelope)
         if self._budget.limit_for(traffic_class) <= 0:
             return False
-        if self.workload_budget is not None:
+        if self.throughput_first and self.workload_budget is not None:
+            return self.workload_budget.can_fit_alone(
+                max(decision.envelope.prompt_tokens, reserved_prompt_tokens or 0),
+                decision.clamp.granted, decision.envelope.has_images, traffic_class.name,
+            )
+        if self.workload_budget is not None and not self.throughput_first:
             reserved = max(decision.envelope.prompt_tokens, reserved_prompt_tokens or 0)
             if reserved + decision.clamp.granted > self.workload_budget.limits.reserved_tokens:
                 return False  # an individually impossible reservation will not clear
@@ -112,7 +131,10 @@ class GatewayPolicy:
         reserved = max(envelope.prompt_tokens, reserved_prompt_tokens or 0)
         borrow_limit = None
         borrowed = False
-        if self.workload_budget is not None:
+        shared_limit = self.capacity_controller.execution_limit() if self.throughput_first else None
+        if self.throughput_first:
+            borrowed = self._budget.in_flight(traffic_class) >= self._budget.limit_for(traffic_class)
+        elif self.workload_budget is not None:
             dynamic_limit = self.workload_budget.borrow_limit(
                 traffic_class.name, reserved, clamp.granted, envelope.has_images
             )
@@ -123,7 +145,10 @@ class GatewayPolicy:
                     >= self._budget.limit_for(traffic_class)
                 )
 
-        if not self._budget.try_acquire(traffic_class, borrow_limit=borrow_limit):
+        if not self._budget.try_acquire(traffic_class, borrow_limit=borrow_limit, shared_limit=shared_limit):
+            if self.throughput_first:
+                return self._reject(envelope, traffic_class, clamp, Outcome.REJECT_BUDGET,
+                                    f"shared execution capacity: {shared_limit}")
             limit = max(
                 self._budget.limit_for(traffic_class),
                 min(self._budget.ceiling, borrow_limit or 0),
@@ -136,23 +161,33 @@ class GatewayPolicy:
         lease = None
         if self.workload_budget is not None:
             try:
-                lease, reason = self.workload_budget.acquire(reserved, clamp.granted, envelope.has_images)
+                lease, reason = self.workload_budget.acquire(
+                    reserved, clamp.granted, envelope.has_images, traffic_class.name
+                )
             except Exception:
                 self._budget.release(traffic_class)
                 raise
             if lease is None:
                 self._budget.release(traffic_class)
-                return self._reject(envelope, traffic_class, clamp, Outcome.REJECT_SHED,
+                # Workload reservations are transient admission capacity, not
+                # evidence that the engine is unavailable. Report them as a
+                # retryable budget limit (HTTP 429 at the transport layer);
+                # the circuit breaker above remains the owner of true 503s.
+                return self._reject(envelope, traffic_class, clamp, Outcome.REJECT_BUDGET,
                                     "workload budget: " + reason)
         notes = ("adaptive class borrow",) if borrowed else ()
         return self._admit(envelope, traffic_class, clamp, notes, workload_lease=lease)
 
-    def release(self, decision: Decision) -> None:
+    def release(
+        self, decision: Decision, actual_output_tokens: int | None = None
+    ) -> None:
         if decision.admitted:
             traffic_class = self._classifier.classify(decision.envelope)
             if not self._is_offbox(traffic_class):
                 if decision.workload_lease is not None and self.workload_budget is not None:
-                    if not self.workload_budget.release(decision.workload_lease):
+                    if not self.workload_budget.release(
+                        decision.workload_lease, actual_output_tokens
+                    ):
                         return
                 self._budget.release(traffic_class)
 

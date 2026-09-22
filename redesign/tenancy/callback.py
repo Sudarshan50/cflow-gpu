@@ -96,7 +96,7 @@ class K3TenancyCallback(CustomLogger):
         # request (or deep-copy LiteLLM's logging/client/lock objects).
         normalized = copy.deepcopy({
             key: data[key] for key in (
-                "messages", "tools", "functions", "extra_body", "chat_template_kwargs",
+                "messages", "tools", "functions", "tool_choice", "extra_body", "chat_template_kwargs",
                 "thinking_effort", "reasoning_effort", "cache_salt", "prompt_cache_key",
                 "kv_cache_salt", "priority", "reasoning", "thinking",
                 "enable_thinking",

@@ -523,6 +523,7 @@ class AccessTail:
 
         n = len(rows)
         bad = by_status.get("4xx", 0) + by_status.get("5xx", 0)
+        lat = [r["req_s"] for r in rows if r["status"] < 400 and r["req_s"] is not None]
         return {
             "available": self.error is None,
             "error": self.error,
@@ -533,6 +534,8 @@ class AccessTail:
             "by_status": by_status,
             "error_rate": (bad / n) if n else None,
             "server_error_rate": (by_status.get("5xx", 0) / n) if n else None,
+            "p50_s": percentile(lat, 0.5),
+            "p95_s": percentile(lat, 0.95),
             "customers": customers,
             "recent_errors": errors,
             "rows_buffered": total_rows,
@@ -687,7 +690,9 @@ GATEWAY_GAUGES = {
     "k3_gateway_workload_reserved_tokens",
     "k3_gateway_workload_large_context_requests",
     "k3_gateway_workload_long_output_requests",
-    "k3_gateway_workload_long_output_last_admission_limit",
+    "k3_gateway_workload_long_output_reserved_tokens",
+    "k3_gateway_workload_long_output_last_token_budget",
+    "k3_gateway_workload_long_output_slot_limit_enabled",
     "k3_gateway_admission_queued_requests",
     "k3_gateway_admission_queued_tokens",
     "k3_gateway_admission_queued_bytes",
@@ -773,9 +778,9 @@ class GatewayMonitor:
     def _latency_rows(values):
         rows = {}
         prefixes = {
-            "k3_gateway_ttft_seconds": "ttft",
-            "k3_gateway_request_seconds": "request",
-            "k3_gateway_admission_wait_seconds": "admission_wait",
+            "k3_gateway_ttft_live_seconds": "ttft",
+            "k3_gateway_request_live_seconds": "request",
+            "k3_gateway_admission_wait_live_seconds": "admission_wait",
         }
         for (name, label_items), value in values.items():
             labels = dict(label_items)
@@ -814,7 +819,7 @@ class GatewayMonitor:
         latest = samples[-1]
         anchor = samples[0]
         for sample in reversed(samples[:-1]):
-            if latest["ts"] - sample["ts"] >= ACCESS_WINDOW_S:
+            if latest["ts"] - sample["ts"] >= RATE_WINDOW_S:
                 anchor = sample
                 break
         covered = latest["ts"] - anchor["ts"]
@@ -847,8 +852,12 @@ class GatewayMonitor:
                 gauges, "k3_gateway_workload_large_context_requests"),
             "long_output_requests": self._scalar(
                 gauges, "k3_gateway_workload_long_output_requests"),
-            "long_output_limit": self._scalar(
-                gauges, "k3_gateway_workload_long_output_last_admission_limit"),
+            "long_output_reserved_tokens": self._scalar(
+                gauges, "k3_gateway_workload_long_output_reserved_tokens"),
+            "long_output_token_budget": self._scalar(
+                gauges, "k3_gateway_workload_long_output_last_token_budget"),
+            "long_output_slot_limit_enabled": self._scalar(
+                gauges, "k3_gateway_workload_long_output_slot_limit_enabled"),
             "queued_requests": self._scalar(
                 gauges, "k3_gateway_admission_queued_requests"),
             "queued_tokens": self._scalar(
@@ -866,7 +875,7 @@ class GatewayMonitor:
         }
         recent = {
             "seconds": covered,
-            "partial": covered < ACCESS_WINDOW_S * 0.95,
+            "partial": covered < RATE_WINDOW_S * 0.95,
             "admission": admission(counters, before),
             "request_outcomes": _labelled_rows(
                 counters, "k3_gateway_requests_total", before),
@@ -1276,7 +1285,7 @@ class Monitor:
             "cache_hit_rate": _round(p["cache_hit_rate"], 4),
         } for p in downsample(series, SERIES_POINTS)]
 
-        access = ACCESS.view()
+        access = ACCESS.view(RATE_WINDOW_S)
         gateway = GATEWAY.view()
         capacity = self.capacity_view(samples[-1] if samples else None, window, cache_cfg)
         if engine_stale:
@@ -1394,11 +1403,6 @@ class Monitor:
             out.append({"level": "bad",
                         "text": "Gateway tokenizer is quarantined; inspected token "
                                 "counts cannot be trusted."})
-        recent_admission = (gateway.get("recent") or {}).get("admission") or {}
-        if recent_admission.get("timeouts"):
-            out.append({"level": "warn",
-                        "text": "%d admission request(s) timed out in the observed "
-                                "gateway window." % recent_admission["timeouts"]})
         if (gateway.get("recent") or {}).get("engine_errors"):
             out.append({"level": "bad",
                         "text": "%d gateway engine error(s) occurred in the observed "
@@ -1427,17 +1431,12 @@ class Monitor:
         if five:
             out.append({"level": "bad",
                         "text": "%d server error(s) (5xx) returned to clients in the "
-                                "last 15 min." % five})
-        throttled = (access.get("by_status") or {}).get("s429", 0)
-        if throttled:
-            out.append({"level": "warn",
-                        "text": "%d HTTP 429 response(s). This may be a tenant limit "
-                                "or an upstream routing response." % throttled})
+                                "last 60s." % five})
         unauth = (access.get("by_status") or {}).get("s401", 0)
         if unauth >= 20:
             out.append({"level": "warn",
                         "text": "%d unauthenticated request(s) (401) in the last "
-                                "15 min - a misconfigured client, or probing."
+                                "60s - a misconfigured client, or probing."
                                 % unauth})
         days = facts.get("cert_days_left")
         if days is not None and days < CERT_WARN_DAYS:

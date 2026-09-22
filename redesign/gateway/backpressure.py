@@ -123,8 +123,18 @@ class ClassBudget:
             return self._in_flight.get(traffic_class.name, 0)
 
     def try_acquire(
-        self, traffic_class: TrafficClass, borrow_limit: int | None = None
+        self, traffic_class: TrafficClass, borrow_limit: int | None = None,
+        *, shared_limit: int | None = None,
     ) -> bool:
+        if shared_limit is not None:
+            # Throughput-first admission has one execution pool. Fair waiting
+            # is owned by AdmissionController rather than hard class partitions.
+            limit = min(self.ceiling, shared_limit)
+            with self._lock:
+                if limit <= 0 or sum(self._in_flight.values()) >= limit:
+                    return False
+                self._in_flight[traffic_class.name] = self._in_flight.get(traffic_class.name, 0) + 1
+                return True
         limit = self.limit_for(traffic_class)
         if borrow_limit is not None:
             # Class shares are protected baseline capacity, not a reason to

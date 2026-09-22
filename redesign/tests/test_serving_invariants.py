@@ -52,7 +52,10 @@ def fake_handler(payload=None, status=200):
     handler.headers = {}
     handler.client_address = ("127.0.0.1", 12345)
     handler.close_connection = False
-    handler._read_payload = Mock(return_value={"prompt": "hi"} if payload is None else payload)
+    handler._read_payload = Mock(
+        return_value={"prompt": "hi", "max_tokens": 1_000}
+        if payload is None else payload
+    )
     handler.send_response = Mock()
     handler.send_header = Mock()
     handler.end_headers = Mock()
@@ -373,13 +376,16 @@ class MetricsAndStatusTest(unittest.TestCase):
             b"vllm:time_to_first_token_seconds_sum 25\n"
             b"vllm:time_to_first_token_seconds_count 12\n"
             b"vllm:request_prefill_time_seconds_sum 34\n"
-            b"vllm:request_prefill_time_seconds_count 12\n",
+            b"vllm:request_prefill_time_seconds_count 12\n"
+            b'vllm:cache_config_info{block_size="384",mamba_block_size="16",'
+            b'kv_cache_size_tokens="1000000"} 1\n',
         ]
         self.assertIsNone(engine.snapshot().mean_itl_seconds)
         current = engine.snapshot()
         self.assertAlmostEqual(current.mean_itl_seconds, .12)
         self.assertAlmostEqual(current.mean_ttft_seconds, 2.5)
         self.assertAlmostEqual(current.mean_prefill_seconds, 2)
+        self.assertEqual(current.cache_block_size_tokens, 384)
 
     def test_http_5xx_is_counted_once_and_status_and_body_are_relayed(self):
         for status in (200, 400, 429, 500, 502, 503, 599):
@@ -449,6 +455,7 @@ class TokenAliasesAndReplicasTest(unittest.TestCase):
                 record = sink.records[-1]
                 self.assertEqual(record.granted_max_tokens, expected)
                 self.assertEqual(budget.in_flight(SHORT_CHAT), 0)
+                self.assertEqual(budget.in_flight(INTERACTIVE), 0)
 
     def test_either_replica_alias_over_one_is_rejected_before_admission(self):
         for replicas in ({"n": 1, "best_of": 2}, {"n": 2, "best_of": 1}, {"best_of": 2}):
